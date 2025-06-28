@@ -1,55 +1,80 @@
+# 📚 Academic Paper Citation Explorer (APCE)
 
-# Academic Paper Citation Explorer (APCE)
+![Deployed](https://img.shields.io/badge/status-deployed-brightgreen)
+![Python](https://img.shields.io/badge/python-3.9%2B-blue)
+![Azure](https://img.shields.io/badge/cloud-Azure-blue)
+![Flask](https://img.shields.io/badge/framework-Flask-orange)
 
-Academic Paper Citation Explorer (APCE) is a cloud-native, retrieval-augmented generation (RAG) system that allows users to upload academic papers (PDFs), extract and explore citations, and interact with AI-powered summaries and Q&A features. The system integrates secure user authentication, Azure Blob Storage for document management, PostgreSQL for user and document metadata, and a simple UI built with Flask and Bootstrap.
+**Academic Paper Citation Explorer (APCE)** is a cloud-native, AI-powered research assistant that streamlines citation exploration for academic PDFs. Leveraging **Retrieval-Augmented Generation (RAG)** and Microsoft Azure, APCE enables researchers to upload papers, automatically extract and summarize citations, explore them through graph visualizations, and ask contextual questions—making literature reviews faster and more intuitive.
 
----
-
-# Architecture Overview
-
-- Frontend: Flask (Jinja2 templates) + Bootstrap CSS
-- Backend: Python + Flask
-- Database: PostgreSQL (for user, document, and chat session metadata)
-- Cloud Storage: Azure Blob Storage
-- LLM + RAG: Python-based semantic document search & summarization
-- Infrastructure-as-Code: Terraform for deploying Azure resources
+Developed as part of a master’s project at Georgia State University, APCE combines intelligent document processing, semantic search, and a scalable cloud-native backend.
 
 ---
 
-# Prerequisites
+## 🚀 Live Demo
 
-Before getting started, ensure you have the following:
+🔴 **Temporarily Unavailable**  
+Due to the expiration of the student Azure credit, the live demo is currently offline.  
+We plan to restore access soon via alternative hosting or updated cloud credits.
+
+Former link (inactive):  
+🔗 [https://apce-webapp.azurewebsites.net/dashboard](https://apce-webapp.azurewebsites.net/dashboard)
+
+---
+
+## 🧠 Features
+
+- 📄 **PDF Upload & Citation Extraction**  
+  Automatically detects and extracts citations from academic papers using NLP and structured parsing.
+
+- 🧠 **AI-Powered Summaries & Q&A**  
+  Uses large language models (LLMs) with semantic search to summarize citations and answer user questions like _"Why was this reference included?"_
+
+- ☁️ **Cloud-Native Infrastructure**  
+  Built and deployed on Microsoft Azure with App Service, Blob Storage, PostgreSQL, and secured virtual networks.
+
+- ⚙️ **Infrastructure as Code**  
+  Fully managed with Terraform for scalable and repeatable deployments.
+
+---
+
+## 🏗️ Architecture Overview
+
+| Component | Stack |
+|----------|-------|
+| Frontend | Flask + Jinja2 + Bootstrap |
+| Backend  | Python + Flask |
+| Database | PostgreSQL |
+| Storage  | Azure Blob Storage |
+| Cloud Platform | Azure App Service, Azure VNet, Azure Network Watcher |
+| DevOps | Terraform (IaC) |
+| AI | LLMs with Retrieval-Augmented Generation (RAG) |
+
+---
+
+## 🔧 Installation & Setup
+
+### Prerequisites
 
 - Python 3.9+
-- PostgreSQL (local or managed)
-- Azure Storage Account (Blob)
-- Azure App Service setup (optional for local testing)
-- Terraform (for infrastructure provisioning)
-- Git (to clone the repository)
+- PostgreSQL
+- Azure Storage Account
+- Terraform
+- Git
 
----
-
-# Installation & Setup
-
-## 1. Extract the zip file
-
-
-## 2. Create and Activate a Virtual Environment
+### 1. Clone and Set Up Project
 
 ```bash
+git clone https://github.com/your-username/apce.git
+cd apce
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
-
-## 3. Install Python Dependencies
-
-```bash
+source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-## 4. Configure Environment Variables
+### 2. Configure Environment
 
-Update the following variables:
+Update the `.env` file:
 
 ```env
 SECRET_KEY=your-secret-key
@@ -60,13 +85,7 @@ POSTGRES_PW=your-db-password
 POSTGRES_DB=your-db-name
 ```
 
-## 5. Run Environment Check (Optional)
-
-```bash
-python check_environment.py
-```
-
-## 6. Start the Application
+### 3. Run Locally
 
 ```bash
 python main.py
@@ -76,15 +95,7 @@ Visit `http://localhost:5000` in your browser.
 
 ---
 
-#  Azure Cloud Deployment
-
-- Backend hosted on Azure App Service
-- Documents stored in Azure Blob Storage
-- PostgreSQL managed locally or via Azure PostgreSQL
-- Network security managed via Azure VNet
-- Deployment infrastructure is defined using Terraform (in `/apce-infra`)
-
-To deploy via Terraform:
+## ☁️ Azure Deployment (Terraform)
 
 ```bash
 cd apce-infra
@@ -92,58 +103,83 @@ terraform init
 terraform apply
 ```
 
+Deployed components:
+- Azure App Service
+- Azure Blob Storage
+- Azure VNet
+- PostgreSQL (local or Azure)
+
 ---
 
-# Key File Structure
+## 📁 Project Structure
 
 ```
 ├── main.py                   # Entry point
-├── app.py                   # Flask app factory
-├── routes.py                # Core routing
-├── auth.py                  # Authentication
-├── document_manager.py      # Uploads, parsing
-├── rag_system.py            # Citation summarization and Q&A
-├── models.py                # Database models
-├── templates/               # Jinja2 frontend templates
-├── static/                  # CSS & images
-├── uploads/                 # Temporary local file storage
-├── config.py                # Environment config
-├── .env.example             # Example environment file
-├── requirements.txt         # Python dependencies
+├── app.py                    # Flask app factory
+├── routes.py                 # Core routing
+├── auth.py                   # Authentication
+├── document_manager.py       # Uploads, parsing
+├── rag_system.py             # Citation summarization and Q&A
+├── azure_blob_manager.py     # Azure integration
+├── models.py                 # DB schema
+├── templates/                # Jinja2 frontend templates
+├── static/                   # CSS, assets
+├── uploads/                 # Temporary storage
+├── apce-infra/              # Terraform scripts
+├── config.py                 # Env configs
 ```
 
 ---
 
-# Database Schema
+## 📊 Results & Evaluation
 
-- `User`: Stores user credentials and profile info
-- `Document`: Metadata for uploaded PDFs
-- `ChatSession`: Associated with user and document
-- `ChatMessage`: Message content within each session
-
----
-
-#  Future Enhancements
-
-- Azure AI Search with vector embeddings
-- Chat session streaming and live summarization
-- Citation network clustering across multiple papers
-- Advanced user role management and analytics
+- ✅ **>90% accuracy** in citation extraction from structured PDFs.
+- 🧠 **LLM responses** were rated as highly relevant in testing, enabling faster comprehension of references.
+- ⚡ **1–2 sec average** query response time.
 
 ---
 
-# Live Demo
+## 📉 Cloud Cost Summary
 
-Deployed version:  
-🔗 [https://apce-webapp.azurewebsites.net/dashboard](https://apce-webapp.azurewebsites.net/dashboard)
+- 💸 **Total Cost (April 19–25, 2025)**: **$4.25**
+- 🚀 100% of cost from Azure App Service (backend)
+- Blob storage, VNet, and other services remained within free/student-tier limits.
 
 ---
 
-##  Acknowledgments
+## 🔍 Limitations & Trade-offs
 
-Built as part of the Master’s Cloud Computing Project  
-Georgia State University — 2025  
-Team Members:  
-- Chandra Kiran Guntupalli  
-- Chandra Sai Reddy Donthireddy  
-- Shishir Kumar Vallapuneni  
+- Limited to Azure Student Subscription (no premium instances or HA databases).
+- Current version uses Azure-hosted PostgreSQL is planned.
+- Summaries may oversimplify highly technical material — user discretion advised.
+
+---
+
+## 🔮 Future Enhancements
+
+- Vector search via Azure AI Search
+- Multi-paper citation clustering
+- Role-based access and analytics dashboard
+- Real-time LLM streaming for Q&A
+- Enhanced document management and search filters
+
+---
+
+## 👨‍💻 Authors
+
+Developed as part of the Master’s Cloud Computing Project at **Georgia State University — 2025**
+
+- **Chandra Kiran Guntupalli**  
+  [LinkedIn](https://www.linkedin.com/in/gchandrakiran) · cguntupalli1@student.gsu.edu
+
+---
+
+## 📑 References
+
+1. Lewis et al. (2020) – Retrieval-Augmented Generation  
+2. PyMuPDF Documentation – [fitz](https://pymupdf.readthedocs.io)  
+3. Devlin et al. (2019) – BERT  
+4. Langchain – [https://www.langchain.com/](https://www.langchain.com/)  
+5. Groq Docs – [https://console.groq.com/docs/models](https://console.groq.com/docs/models)
+
+---
