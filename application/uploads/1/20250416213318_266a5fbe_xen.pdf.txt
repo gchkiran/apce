@@ -1,0 +1,1300 @@
+Xen and theArtof Virtualization
+PaulBarham∗, BorisDragovic,KeirFraser,StevenHand,TimHarris,
+AlexHo,RolfNeugebauer†, IanPratt, AndrewWarﬁeld
+University of Cambridge Computer Laboratory
+15 JJ Thomson Avenue, Cambridge, UK, CB3 0FD
+{ﬁrstname.lastname }@cl.cam.ac.uk
+ABSTRACT
+Numerous systems have been designed which use virtualization to
+subdividetheampleresourcesofamoderncomputer. Somerequire
+specialized hardware, or cannot support commodity operating sys-
+tems. Some target 100% binary compatibility at the expense ofperformance. Others sacriﬁce security or functionality for speed.
+Few offer resource isolation or performance guarantees; most pro-
+videonly best-effortprovisioning,riskingdenial ofservice.
+This paper presents Xen, an x86 virtual machine monitor which
+allowsmultiplecommodityoperatingsystemstoshareconventional
+hardware in a safe and resource managed fashion, but without sac-riﬁcing either performance or functionality. This is achieved byproviding an idealized virtual machine abstraction to which oper-
+atingsystemssuchasLinux,BSDandWindowsXP,canbe ported
+withminimal effort.
+Our design is targeted at hosting up to 100 virtual machine in-
+stances simultaneously on a modern server. The virtualization ap-
+proachtakenbyXenisextremelyefﬁcient: weallowoperatingsys-tems such as Linux and Windows XP to be hosted simultaneously
+for a negligible performance overhead — at most a few percent
+comparedwiththeunvirtualizedcase. Weconsiderablyoutperformcompeting commercial and freely available solutions in a range of
+microbenchmarks andsystem-wide tests.
+CategoriesandSubjectDescriptors
+D.4.1[OperatingSystems ]: ProcessManagement;D.4.2[ Opera-
+tingSystems ]: StorageManagement;D.4.8[ OperatingSystems ]:
+Performance
+GeneralTerms
+Design,Measurement, Performance
+Keywords
+VirtualMachine Monitors,Hypervisors,Paravirtualization
+∗MicrosoftResearchCambridge, UK
+†IntelResearchCambridge, UK
+Permission to make digital or hard copies of all or part of this work for
+personal or classroom use is granted without fee provided that copies arenot made or distributed for proﬁt or commercial advantage and that copies
+bearthisnoticeandthefullcitationontheﬁrstpage. Tocopyotherwise,to
+republish,topostonserversortoredistributetolists,requirespriorspeciﬁcpermission and/orafee.SOSP’03, October 19–22,2003,BoltonLanding,New York,USA.
+Copyright2003ACM1-58113-757-5/03/0010...
+$5.00.1. INTRODUCTION
+Moderncomputersaresufﬁcientlypowerfultousevirtualization
+to present the illusion of many smaller virtual machines (VMs),
+each running a separate operating system instance. This has led to
+aresurgenceofinterestinVMtechnology. InthispaperwepresentXen, a high performance resource-managed virtual machine mon-
+itor (VMM) which enables applications such as server consolida-
+tion [42, 8], co-located hosting facilities [14], distributed web ser-vices [43], secure computing platforms [12, 16] and applicationmobility [26,37].
+Successful partitioning of a machine to support the concurrent
+execution of multiple operating systems poses several challenges.Firstly,virtualmachinesmustbeisolatedfromoneanother: itisnot
+acceptable for the execution of one to adversely affect the perfor-
+mance of another. This is particularly true when virtual machinesare owned by mutually untrusting users. Secondly, it is necessary
+tosupportavarietyofdifferentoperatingsystemstoaccommodate
+theheterogeneityofpopularapplications. Thirdly,theperformanceoverhead introduced byvirtualization shouldbe small.
+Xenhostscommodityoperatingsystems,albeitwithsomesource
+modiﬁcations. The prototype described and evaluated in this papercan support multiple concurrent instances of our XenoLinux guestoperatingsystem;eachinstanceexportsanapplicationbinaryinter-
+face identical to a non-virtualized Linux 2.4. Our port of Windows
+XP to Xen is not yet complete but is capable of running simpleuser-spaceprocesses. WorkisalsoprogressinginportingNetBSD.
+Xen enables users to dynamically instantiate an operating sys-
+temtoexecutewhatevertheydesire. IntheXenoServerproject[15,35] we are deploying Xen on standard server hardware at econom-
+ically strategic locations within ISPs or at Internet exchanges. We
+performadmissioncontrolwhenstartingnewvirtualmachinesandexpecteachVMto payinsomefashionfortheresourcesitrequires.
+Wediscussourideasandapproachinthisdirectionelsewhere[21];
+thispaper focusesontheVMM.
+There are a number of ways to build a system to host multiple
+applicationsandserversonasharedmachine. Perhapsthesimplest
+is to deploy one or more hosts running a standard operating sys-
+tem such as Linux or Windows, and then to allow users to installﬁles and start processes — protection between applications being
+provided by conventional OS techniques. Experience shows that
+system administration can quickly become a time-consuming taskduetocomplexconﬁgurationinteractionsbetweensupposedlydis-
+joint applications.
+More importantly, such systems do not adequately support per-
+formance isolation; the scheduling priority, memory demand, net-
+work trafﬁc and disk accesses of one process impact the perfor-
+mance of others. This may be acceptable when there is adequateprovisioning and a closed user group (such as in the case of com-
+164 
+
+putational grids, or the experimental PlanetLab platform [33]), but
+notwhen resourcesareoversubscribed, orusersuncooperative.
+One way to address this problem is to retroﬁt support for per-
+formance isolation to the operating system. This has been demon-
+strated to a greater or lesser degree with resource containers [3],
+Linux/RK [32], QLinux [40] and SILK [4]. One difﬁculty withsuchapproaches isensuring that allresource usage isaccounted to
+the correct process — consider, for example, the complex interac-
+tionsbetweenapplicationsduetobuffercacheorpagereplacementalgorithms. Thisiseffectivelytheproblemof“QoScrosstalk”[41]
+withintheoperatingsystem. Performingmultiplexingatalowlevel
+can mitigate this problem, as demonstrated by the Exokernel [23]and Nemesis [27] operating systems. Unintentional or undesired
+interactionsbetween tasksare minimized.
+WeusethissamebasicapproachtobuildXen,whichmultiplexes
+physical resources at the granularity of an entire operating systemandisabletoprovideperformanceisolationbetweenthem. Incon-
+trast to process-level multiplexing this also allows a range of guest
+operating systems to gracefully coexist rather than mandating aspeciﬁcapplicationbinaryinterface. Thereisapricetopayforthis
+ﬂexibility — running a full OS is more heavyweight than running
+a process, both in terms of initialization (e.g. booting or resumingversusforkandexec),andin termsofresource consumption.
+For our target of up to 100 hosted OS instances, we believe this
+price is worth paying; it allows individual users to run unmodiﬁedbinaries,orcollectionsofbinaries,inaresourcecontrolledfashion
+(forinstanceanApacheserveralongwithaPostgreSQLbackend).
+Furthermore it provides an extremely high level of ﬂexibility sincethe user can dynamically create the precise execution environmenttheir software requires. Unfortunate conﬁguration interactions be-
+tween various services and applications are avoided (for example,
+each Windows instance maintainsitsownregistry).
+Theremainderofthispaperisstructuredasfollows: inSection2
+we explain our approach towards virtualization and outline how
+Xen works. Section 3 describes key aspects of our design and im-plementation. Section4usesindustrystandardbenchmarkstoeval-
+uatetheperformanceofXenoLinuxrunningaboveXenincompar-
+isonwithstand-aloneLinux,VMwareWorkstationandUser-modeLinux(UML).Section5reviewsrelatedwork,andﬁnallySection6
+discussesfutureworkand concludes.
+2. XEN: APPROACH&OVERVIEW
+In a traditional VMM the virtual hardware exposed is function-
+ally identical to the underlying machine [38]. Although full virtu-
+alization has the obvious beneﬁt of allowing unmodiﬁed operating
+systems to be hosted, it also has a number of drawbacks. This isparticularlytrue forthe prevalent IA-32,or x86, architecture.
+Support for full virtualization was never part of the x86 archi-
+tecturaldesign. Certainsupervisorinstructionsmustbehandledbythe VMM for correct virtualization, but executing these with in-sufﬁcient privilege fails silently rather than causing a convenient
+trap [36]. Efﬁciently virtualizing the x86 MMU is also difﬁcult.
+These problems can be solved, but only at the cost of increasedcomplexity and reduced performance. VMware’s ESX Server [10]
+dynamically rewrites portions of the hosted machine code to insert
+traps wherever VMM intervention might be required. This transla-tion is applied to the entire guest OS kernel (with associated trans-
+lation, execution, and caching costs) since all non-trapping privi-
+leged instructions must be caught and handled. ESX Server imple-mentsshadowversionsofsystemstructuressuchaspagetablesand
+maintains consistency with the virtual tables by trapping every up-
+date attempt — this approach has a high cost for update-intensiveoperationssuchascreating a newapplication process.Notwithstanding the intricacies of the x86, there are other argu-
+ments against full virtualization. In particular, there are situationsin which it is desirable for the hosted operating systems to see realas well as virtual resources: providing both real and virtual time
+allowsaguestOStobettersupporttime-sensitivetasks,andtocor-
+rectlyhandleTCPtimeoutsandRTTestimates,whileexposingrealmachine addresses allows a guest OS to improve performance by
+usingsuperpages [30]orpage coloring [24].
+Weavoidthedrawbacksoffullvirtualizationbypresentingavir-
+tual machine abstraction that is similar but not identical to the un-
+derlyinghardware—anapproachwhichhasbeendubbed paravir-
+tualization [43]. This promises improved performance, although
+it does require modiﬁcations to the guest operating system. It is
+important to note, however, that we do not require changes to the
+application binary interface (ABI), and hence no modiﬁcations arerequired toguest applications .
+We distillthe discussionsofarintoasetofdesign principles:
+1. Support for unmodiﬁed application binaries is essential, or
+userswillnottransitiontoXen. Hencewemustvirtualizeall
+architectural featuresrequired byexisting standardABIs.
+2. Supporting full multi-application operating systems is im-
+portant, as this allows complex server conﬁgurations to bevirtualized withina singleguestOSinstance.
+3. Paravirtualization is necessary to obtain high performance
+and strong resource isolation on uncooperative machine ar-
+chitectures suchasx86.
+4. Even on cooperative machine architectures, completely hid-
+ing the effects of resource virtualization from guest OSesrisksbothcorrectness andperformance.
+Note that our paravirtualized x86 abstraction is quite different
+from that proposed by the recent Denali project [44]. Denali is de-
+signed to support thousands of virtual machines running network
+services, the vast majority of which are small-scale and unpopu-lar. In contrast, Xen is intended to scale to approximately 100 vir-
+tual machines running industry standard applications and services.
+Giventheseverydifferentgoals,itisinstructivetocontrastDenali’sdesign choiceswith ourown principles.
+Firstly, Denali does not target existing ABIs, and so can elide
+certain architectural features from their VM interface. For exam-ple, Denali does not fully support x86 segmentation although it isexported (and widely used
+1) in the ABIs of NetBSD, Linux, and
+Windows XP.
+Secondly, the Denali implementation does not address the prob-
+lem of supporting application multiplexing, nor multiple address
+spaces, within a single guest OS. Rather, applications are linked
+explicitly against an instance of the Ilwaco guest OS in a mannerratherreminiscentofalibOSintheExokernel[23]. Henceeachvir-
+tual machine essentially hosts a single-user single-application un-
+protected “operating system”. In Xen, by contrast, a single virtualmachine hosts a real operating system which may itself securely
+multiplex thousands of unmodiﬁed user-level processes. Although
+a prototype virtual MMU has been developed which may help De-
+nali in this area [44], we are unaware of any published technicaldetails orevaluation.
+Thirdly,intheDenaliarchitecturetheVMMperformsallpaging
+to and from disk. This is perhaps related to the lack of memory-management support at the virtualization layer. Paging within the
+1For example, segments are frequently used by thread libraries to address
+thread-local data.
+165 
+Memory Management
+Segmentation Cannot install fully-privileged segment descriptors and cannot overlap with the top end of the linear
+addressspace.
+Paging Guest OS has direct read access to hardware page tables, but updates are batched and validated by
+the hypervisor. A domain may be allocated discontiguous machine pages.
+CPU
+Protection GuestOSmustrunata lowerprivilege level than Xen.
+Exceptions Guest OS must register a descriptor table for exception handlers with Xen. Aside from page faults,
+thehandlersremain the same.
+SystemCalls Guest OS may install a ‘fast’ handler for system calls, allowing direct calls from an application into
+itsguestOSand avoiding indirecting through Xenon every call.
+Interrupts Hardware interruptsarereplaced with alightweight event system.
+Time EachguestOS hasatimerinterface and isaware ofboth‘real’and ‘virtual’time.
+Device I/O
+Network, Disk,etc. Virtual devices are elegant and simple to access. Data is transferred using asynchronous I/O rings.
+Anevent mechanism replaces hardware interruptsfornotiﬁcations.
+Table1: Theparavirtualized x86interface.
+VMM is contrary to our goal of performance isolation: malicious
+virtual machines can encourage thrashing behaviour, unfairly de-priving others of CPU time and disk bandwidth. In Xen we expect
+each guest OS to perform its own paging using its own guaran-
+teed memory reservation and disk allocation (an idea previouslyexploited byself-paging[20]).
+Finally, Denali virtualizes the ‘namespaces’ of all machine re-
+sources,takingtheviewthatnoVMcanaccesstheresourcealloca-tionsofanotherVMifitcannotnamethem(forexample,VMshave
+no knowledge of hardware addresses, only the virtual addresses
+created for them by Denali). In contrast, we believe that secure ac-cesscontrolwithinthehypervisorissufﬁcienttoensureprotection;furthermore, as discussed previously, there are strong correctness
+andperformanceargumentsformakingphysicalresourcesdirectly
+visibletoguestOSes.
+Inthefollowingsectionwedescribethevirtualmachineabstrac-
+tionexportedbyXenanddiscusshowaguestOSmustbemodiﬁed
+toconformtothis. Notethatinthispaperwereservetheterm guest
+operating system to refer to one of the OSes that Xen can host and
+weusetheterm domaintorefertoarunningvirtualmachinewithin
+which a guest OS executes; the distinction is analogous to that be-tween aprogramand aprocessin a conventional system. We call
+Xenitselfthe hypervisor sinceitoperatesatahigherprivilegelevel
+thanthesupervisorcodeoftheguestoperatingsystemsthatithosts.
+2.1 TheVirtualMachineInterface
+Table1presentsanoverviewoftheparavirtualizedx86interface,
+factored into three broad aspects of the system: memory manage-
+ment, the CPU, and device I/O. In the following we address each
+machine subsystem in turn, and discuss how each is presented inour paravirtualized architecture. Note that although certain parts
+of our implementation, such as memory management, are speciﬁc
+tothex86,manyaspects(suchasourvirtualCPUandI/Odevices)canbereadilyappliedtoothermachinearchitectures. Furthermore,x86representsa worstcase intheareaswhereitdifferssigniﬁcantly
+fromRISC-styleprocessors—forexample,efﬁcientlyvirtualizing
+hardware page tables is more difﬁcult than virtualizing a software-managed TLB.
+2.1.1 Memorymanagement
+Virtualizing memory is undoubtedly the most difﬁcult part of
+paravirtualizing an architecture, both in terms of the mechanismsrequired in the hypervisor and modiﬁcations required to port eachguestOS.Thetaskiseasierifthearchitectureprovidesasoftware-
+managed TLB as these can be efﬁciently virtualized in a simplemanner [13]. A tagged TLB is another useful feature supported
+by most server-class RISC architectures, including Alpha, MIPS
+and SPARC. Associating an address-space identiﬁer tag with eachTLB entry allows the hypervisor and each guest OS to efﬁciently
+coexistinseparateaddressspacesbecause thereisnoneedtoﬂush
+the entireTLBwhen transferringexecution.
+Unfortunately, x86 does not have a software-managed TLB; in-
+stead TLB misses are serviced automatically by the processor by
+walking the page table structure in hardware. Thus to achieve thebestpossibleperformance,allvalidpagetranslationsforthecurrentaddress space should be present in the hardware-accessible page
+table. Moreover, because the TLB is not tagged, address space
+switchestypicallyrequireacompleteTLBﬂush. Giventheselimi-tations, we made two decisions: (i) guest OSes are responsible for
+allocating and managing the hardware page tables, with minimal
+involvement from Xen to ensure safety and isolation; and (ii) Xenexists in a 64MB section at the top of every address space, thus
+avoiding a TLBﬂush when entering and leaving the hypervisor.
+Each time a guest OS requires a new page table, perhaps be-
+cause a new process is being created, it allocates and initializes a
+page from its own memory reservation and registers it with Xen.
+At this point the OS must relinquish direct write privileges to thepage-table memory: all subsequent updates must be validated byXen. This restricts updates in a number of ways, including only
+allowinganOStomappagesthatitowns,anddisallowingwritable
+mappingsofpagetables. GuestOSesmay batchupdaterequeststo
+amortize the overhead of entering the hypervisor. The top 64MB
+region of each address space, which is reserved for Xen, is not ac-
+cessible or remappable by guest OSes. This address region is notused by any of the common x86 ABIs however, so this restriction
+does notbreak application compatibility.
+Segmentation is virtualized in a similar way, by validating up-
+dates to hardware segment descriptor tables. The only restrictions
+on x86 segment descriptors are: (i) they must have lower privi-
+lege than Xen, and (ii) they may not allow any access to the Xen-reserved portionoftheaddressspace.
+2.1.2 CPU
+Virtualizing the CPU has several implications for guest OSes.
+Principally, the insertion of a hypervisor below the operating sys-temviolatestheusualassumptionthattheOSisthemostprivileged
+166 
+entity in the system. In order to protect the hypervisor from OS
+misbehavior (and domains from one another) guest OSes must bemodiﬁedtorun atalower privilege level.
+Many processor architectures only provide two privilege levels.
+In these cases the guest OS would share the lower privilege level
+with applications. The guest OS would then protect itself by run-ninginaseparateaddressspacefromitsapplications,andindirectly
+pass control to and from applications via the hypervisor to set the
+virtualprivilegelevelandchangethecurrentaddressspace. Again,if the processor’s TLB supports address-space tags then expensive
+TLBﬂushescan be avoided.
+Efﬁcient virtualizion of privilege levels is possible on x86 be-
+causeitsupportsfourdistinctprivilegelevelsinhardware. Thex86
+privilege levels are generally described as rings, and are numbered
+from zero (most privileged) to three (least privileged). OS codetypicallyexecutesinring0becausenootherringcanexecutepriv-ileged instructions, while ring 3 is generally used for application
+code. To our knowledge, rings 1 and 2 have not been used by any
+well-known x86 OS since OS/2. Any OS which follows this com-mon arrangement can be ported to Xen by modifying it to execute
+in ring 1. This prevents the guest OS from directly executing priv-
+ileged instructions, yet it remains safely isolated from applicationsrunninginring3.
+Privileged instructions are paravirtualized by requiring them to
+be validated and executed within Xen— this applies to operationssuch as installing a new page table, or yielding the processor when
+idle (rather than attempting to hltit). Any guest OS attempt to
+directly execute a privileged instruction is failed by the processor,either silently or by taking a fault, since only Xen executes at asufﬁcientlyprivileged level.
+Exceptions,includingmemoryfaultsandsoftwaretraps,arevir-
+tualizedonx86verystraightforwardly. Atabledescribingthehan-dler for each type of exception is registered with Xen for valida-
+tion. The handlers speciﬁed in this table are generally identical
+to those for real x86 hardware; this is possible because the ex-ception stack frames are unmodiﬁed in our paravirtualized archi-
+tecture. The sole modiﬁcation is to the page fault handler, which
+wouldnormallyreadthefaultingaddressfromaprivilegedproces-sor register ( CR2); since this is not possible, we write it into an
+extended stack frame
+2. When an exception occurs while executing
+outside ring 0, Xen’s handler creates a copy of the exception stackframe on the guest OS stack and returns control to the appropriateregisteredhandler.
+Typicallyonlytwotypesofexceptionoccurfrequentlyenoughto
+affect system performance: system calls (which are usually imple-mentedviaasoftwareexception),andpagefaults. Weimprovethe
+performance of system calls by allowing each guest OS to register
+a‘fast’exceptionhandlerwhichisaccesseddirectlybytheproces-sor without indirecting via ring 0; this handler is validated before
+installingitinthehardwareexceptiontable. Unfortunatelyitisnot
+possible to apply the same technique to the page fault handler be-cause only code executing in ring 0 can read the faulting address
+from register CR2; page faults must therefore always be delivered
+viaXensothatthisregistervaluecanbesavedforaccessinring1.
+Safetyisensuredbyvalidatingexceptionhandlerswhentheyare
+presentedtoXen. Theonlyrequiredcheckisthatthehandler’scode
+segment does not specify execution in ring 0. Since no guest OS
+can create such a segment, it sufﬁces to compare the speciﬁed seg-mentselectortoasmallnumberofstaticvalueswhicharereserved
+by Xen. Apart from this, any other handler problems are ﬁxed up
+duringexception propagation —forexample, ifthehandler’scode
+2In hindsight, writing the value into a pre-agreed shared memory location
+ratherthanmodifyingthestack framewould havesimpliﬁed theXP port.OSsubsection #lines
+Linux XP
+Architecture-independent 78 1299
+Virtual network driver 484 –
+Virtual block-device driver 1070 –
+Xen-speciﬁc (non-driver) 1363 3321Total 2995 4620
+(Portionoftotalx86code base 1.36% 0.04% )
+Table2: ThesimplicityofportingcommodityOSestoXen. The
+costmetricisthenumberoflinesofreasonablycommentedand
+formattedcodewhicharemodiﬁedoraddedcomparedwiththeoriginal x86code base(excluding device drivers).
+segment is not present or if the handler is not paged into mem-
+ory then an appropriate fault will be taken when Xen executes theiretinstruction which returns to the handler. Xen detects these
+“double faults” by checking the faulting program counter value: if
+the address resides within the exception-virtualizing code then the
+offending guestOSisterminated.
+Notethatthis“lazy”checkingissafeevenforthedirectsystem-
+call handler: access faults will occur when the CPU attempts to
+directly jump to the guest OS handler. In this case the faultingaddress will be outside Xen (since Xen will never execute a guest
+OS system call) and so the fault is virtualized in the normal way.
+If propagation of the fault causes a further “double fault” then theguestOS isterminated asdescribed above.
+2.1.3 DeviceI/O
+Rather than emulating existing hardware devices, as is typically
+done in fully-virtualized environments, Xen exposes a set of cleanand simple device abstractions. This allows us to design an inter-
+face that is both efﬁcient and satisﬁes our requirements for protec-
+tion and isolation. To this end, I/O data is transferred to and fromeach domain via Xen, using shared-memory, asynchronous buffer-
+descriptor rings. These provide a high-performance communica-
+tion mechanism for passing buffer information vertically throughthe system, while allowing Xen to efﬁciently perform validationchecks (for example, checking that buffers are contained within a
+domain’s memoryreservation).
+Similartohardwareinterrupts,Xensupportsalightweightevent-
+delivery mechanism which is used for sending asynchronous noti-
+ﬁcations to a domain. These notiﬁcations are made by updating a
+bitmap of pending event types and, optionally, by calling an eventhandlerspeciﬁedbytheguestOS.Thesecallbackscanbe‘heldoff’
+atthediscretionoftheguestOS—toavoidextracostsincurredby
+frequent wake-up notiﬁcations, forexample.
+2.2 TheCostof PortinganOSto Xen
+Table 2 demonstrates the cost, in lines of code, of porting com-
+modity operating systems to Xen’s paravirtualized x86 environ-
+ment. NotethatourNetBSDportisataveryearlystage,andhencewereportnoﬁgureshere. TheXPportismoreadvanced,butstillin
+progress; it can execute a number of user-space applications from
+a RAM disk, but it currently lacks any virtual I/O drivers. For thisreason, ﬁgures for XP’s virtual device drivers are not presented.
+However, as with Linux, we expect these drivers to be small and
+simpleduetotheidealizedhardwareabstractionpresentedbyXen.
+Windows XP required a surprising number of modiﬁcations to
+its architecture independent OS code because it uses a variety of
+structuresandunionsforaccessingpage-tableentries(PTEs). Eachpage-table access had to be separately modiﬁed, although some of
+167 
+XEN
+H/W (SMP x86, phy mem, enet, SCSI/IDE)virtual 
+networkvirtual 
+blockdevvirtual 
+x86 CPUvirtual 
+phy memControl
+Plane
+Software
+GuestOS
+(XenoLinux)GuestOS
+(XenoBSD)GuestOS
+(XenoXP)User
+SoftwareUser
+SoftwareUser
+Software
+GuestOS
+(XenoLinux)
+Xeno-Aware
+Device DriversXeno-Aware
+Device DriversXeno-Aware
+Device DriversXeno-Aware
+Device Drivers
+Domain0
+control
+interface
+Figure 1: The structure of a machine running the Xen hyper-
+visor, hosting a number of different guest operating systems,including Domain0 running control software in a XenoLinux
+environment.
+this process was automated with scripts. In contrast, Linux needed
+farfewermodiﬁcationstoitsgenericmemorysystemasitusespre-
+processor macros to access PTEs — the macro deﬁnitions providea convenient place to add the translation and hypervisor calls re-
+quiredbyparavirtualization.
+In both OSes, the architecture-speciﬁc sections are effectively
+a port of the x86 code to our paravirtualized architecture. This
+involvedrewritingroutineswhichusedprivilegedinstructions,and
+removing a large amount of low-level system initialization code.Again, more changes were required in Windows XP, mainly due
+to the presence of legacy 16-bit emulation code and the need for
+a somewhat different boot-loading mechanism. Note that the x86-speciﬁc code base in XP is substantially larger than in Linux andhence alarger portingeffortshouldbeexpected.
+2.3 Control andManagement
+Throughout the design and implementation of Xen, a goal has
+been to separate policy from mechanism wherever possible. Al-
+though the hypervisor must be involved in data-path aspects (for
+example, scheduling the CPU between domains, ﬁltering networkpacketsbeforetransmission,orenforcingaccesscontrolwhenread-
+ing data blocks), there is no need for it to be involved in, or even
+aware of, higher level issues such as how the CPU is to be shared,orwhichkindsofpacket each domain maytransmit.
+The resulting architecture is one in which the hypervisor itself
+providesonlybasiccontroloperations. Theseareexportedthroughan interface accessible from authorized domains; potentially com-
+plexpolicydecisions,suchasadmissioncontrol,arebestperformed
+by management software running over a guest OS rather than inprivileged hypervisor code.
+The overall system structure is illustrated in Figure 1. Note that
+a domain is created at boot time which is permitted to use the con-
+trol interface . This initial domain, termed Domain0, is responsible
+for hosting the application-level management software. The con-
+trol interface provides the ability to create and terminate other do-
+mains and to control their associated scheduling parameters, phys-ical memory allocations and the access they are given to the ma-
+chine’s physical disksand network devices.
+Inadditiontoprocessorandmemoryresources,thecontrolinter-
+facesupportsthecreationanddeletionofvirtualnetworkinterfaces
+(VIFs) and block devices (VBDs). These virtual I/O devices have
+associated access-control information which determines which do-mains can access them, and with what restrictions (for example, aread-only VBD may be created, or a VIF may ﬁlter IP packets to
+prevent source-addressspooﬁng).
+This control interface, together with proﬁling statistics on the
+current state of the system, is exported to a suite of application-
+levelmanagementsoftwarerunningin Domain0. Thiscomplement
+ofadministrativetoolsallowsconvenientmanagementoftheentireserver: current tools can create and destroy domains, set network
+ﬁlters and routing rules, monitor per-domain network activity at
+packet and ﬂow granularity, and create and delete virtual networkinterfacesandvirtualblockdevices. Weanticipatethedevelopment
+of higher-level tools to further automate the application of admin-
+istrativepolicy.
+3. DETAILEDDESIGN
+In this section we introduce the design of the major subsystems
+that make up a Xen-based server. In each case we present both
+Xen and guest OS functionality for clarity of exposition. The cur-
+rent discussion of guest OSes focuses on XenoLinux as this is themostmature;nonethelessourongoingportingofWindowsXPand
+NetBSD givesusconﬁdence thatXen isguest OSagnostic.
+3.1 Control Transfer: Hypercalls andEvents
+Twomechanismsexistforcontrolinteractions between Xen and
+anoverlyingdomain: synchronouscallsfromadomaintoXenmaybe made using a hypercall, while notiﬁcations are delivered to do-
+mainsfromXen usingan asynchronousevent mechanism.
+Thehypercallinterfaceallowsdomainstoperformasynchronous
+softwaretrapintothehypervisortoperformaprivilegedoperation,analogous to the use of system calls in conventional operating sys-
+tems. An example use of a hypercall is to request a set of page-
+table updates, in which Xen validates and applies a list of updates,returning controltothe calling domainwhen thisiscompleted.
+Communication from Xen to a domain is provided through an
+asynchronous event mechanism, which replaces the usual deliverymechanisms for device interrupts and allows lightweight notiﬁca-
+tionofimportanteventssuchasdomain-terminationrequests. Akin
+totraditionalUnixsignals,thereareonlyasmallnumberofevents,each acting to ﬂag a particular type of occurrence. For instance,
+eventsareusedtoindicatethatnewdatahasbeenreceivedoverthe
+network, orthat avirtualdiskrequesthascompleted.
+Pending events are stored in a per-domain bitmask which is up-
+dated by Xen before invoking an event-callback handler speciﬁed
+by the guest OS. The callback handler is responsible for resetting
+the set of pending events, and responding to the notiﬁcations in anappropriatemanner. Adomainmayexplicitlydefereventhandling
+by setting a Xen-readable software ﬂag: this is analogous to dis-
+abling interruptsonareal processor.
+3.2 Data Transfer: I/ORings
+The presence of a hypervisor means there is an additional pro-
+tectiondomainbetweenguestOSesandI/Odevices,soitiscrucial
+thatadatatransfermechanismbeprovidedthatallowsdatatomove
+vertically through thesystemwithaslittleoverhead aspossible.
+Two main factors have shaped the design of our I/O-transfer
+mechanism: resource management and event notiﬁcation. For re-
+sourceaccountability,weattempttominimizetheworkrequiredtodemultiplexdatatoaspeciﬁcdomainwhenaninterruptisreceived
+from a device — the overhead of managing buffers is carried out
+later where computation may be accounted to the appropriate do-main. Similarly, memory committed to device I/O is provided by
+the relevant domains wherever possible to prevent the crosstalk in-
+herent in shared buffer pools; I/O buffers are protected during datatransferbypinning theunderlying page frameswithin Xen.
+168 
+Request Consumer
+Private pointerin XenRequest Producer
+Shared pointerupdated by guest OS
+Response Consumer
+Private pointerin guest OSResponse Producer
+Shared pointerupdated byXen
+Request queue - Descriptors queued by the VM but not yet accepted by Xen
+Outstanding descriptors - Descriptor slots awaiting a response from Xen
+Response queue - Descriptors returned by Xen in response to serviced requests
+Unused descriptors
+Figure 2: The structure of asynchronous I/O rings, which are
+usedfor datatransferbetween XenandguestOSes.
+Figure 2 shows the structure of our I/O descriptor rings. A ring
+isacircularqueueofdescriptorsallocatedbyadomainbutaccessi-
+ble from within Xen. Descriptors do not directly contain I/O data;
+instead, I/O data buffers are allocated out-of-band by the guest OSand indirectly referenced by I/O descriptors. Access to each ring
+isbasedaroundtwopairsofproducer-consumerpointers: domains
+place requests on a ring, advancing a request producer pointer, andXen removes these requests for handling, advancing an associated
+request consumer pointer. Responses are placed back on the ring
+similarly, save with Xen as the producer and the guest OS as theconsumer. There is no requirement that requests be processed inorder: theguestOSassociatesauniqueidentiﬁerwitheachrequest
+whichisreproducedintheassociatedresponse. ThisallowsXento
+unambiguouslyreorderI/Ooperationsduetoschedulingorpriorityconsiderations.
+This structure is sufﬁciently generic to support a number of dif-
+ferent device paradigms. For example, a set of ‘requests’ can pro-vide buffers for network packet reception; subsequent ‘responses’
+then signal the arrival of packets into these buffers. Reordering
+is useful when dealing with disk requests as it allows them to bescheduledwithinXenforefﬁciency,andtheuseofdescriptorswith
+out-of-bandbuffersmakesimplementing zero-copy transfereasy.
+We decouple the production of requests or responses from the
+notiﬁcation of the other party: in the case of requests, a domainmay enqueue multiple entries before invoking a hypercall to alert
+Xen; in the case of responses, a domain can defer delivery of a
+notiﬁcation event by specifying a threshold number of responses.This allows each domain to trade-off latency and throughput re-
+quirements, similarly to the ﬂow-aware interrupt dispatch in the
+ArseNICGigabit Ethernet interface [34].
+3.3 SubsystemVirtualization
+The control and data transfer mechanisms described are used in
+our virtualization of the various subsystems. In the following, wediscuss how this virtualization is achieved for CPU, timers, mem-
+ory,network anddisk.
+3.3.1 CPU scheduling
+XencurrentlyschedulesdomainsaccordingtotheBorrowedVir-
+tual Time (BVT) scheduling algorithm [11]. We chose this par-
+ticular algorithms since it is both work-conserving and has a spe-cialmechanism forlow-latency wake-up (or dispatch)ofadomain
+when it receives an event. Fast dispatch is particularly important
+to minimize the effect of virtualization on OS subsystems that aredesigned to run in a timely fashion; for example, TCP relies onthe timely delivery of acknowledgments to correctly estimate net-
+work round-trip times. BVT provides low-latency dispatch by us-ing virtual-time warping, a mechanism which temporarily violates‘ideal’ fair sharing to favor recently-woken domains. However,
+other scheduling algorithms could be trivially implemented over
+our generic scheduler abstraction. Per-domain scheduling parame-terscanbeadjustedbymanagementsoftwarerunningin Domain0.
+3.3.2 Timeandtimers
+Xen provides guest OSes with notions of real time, virtual time
+andwall-clocktime. Realtimeisexpressedinnanosecondspassed
+sincemachinebootandismaintainedtotheaccuracyoftheproces-
+sor’scyclecounterandcanbefrequency-lockedtoanexternaltimesource (for example, via NTP). A domain’s virtual time only ad-
+vances while it is executing: this is typically used by the guest OS
+scheduler to ensure correct sharing of its timeslice between appli-cation processes. Finally, wall-clock time is speciﬁed as an offset
+tobeaddedtothecurrentrealtime. Thisallowsthewall-clocktime
+tobe adjusted withoutaffecting the forwardprogressofreal time.
+Each guest OS can program a pair of alarm timers, one for real
+time and the other for virtual time. Guest OSes are expected to
+maintain internal timer queues and use the Xen-provided alarm
+timers to trigger the earliest timeout. Timeouts are delivered us-ing Xen’sevent mechanism.
+3.3.3 Virtual addresstranslation
+As with other subsystems, Xen attempts to virtualize memory
+access with as little overhead as possible. As discussed in Sec-
+tion 2.1.1, this goal is made somewhat more difﬁcult by the x86
+architecture’s use of hardware page tables. The approach taken byVMware is to provide each guest OS with a virtual page table, not
+visible to the memory-management unit (MMU) [10]. The hyper-
+visor is then responsible for trapping accesses to the virtual pagetable, validating updates, and propagating changes back and forthbetweenitandtheMMU-visible‘shadow’pagetable. Thisgreatly
+increases the cost of certain guest OS operations, such as creat-
+ingnewvirtualaddressspaces,andrequiresexplicitpropagationofhardware updatesto‘accessed’ and‘dirty’bits.
+Althoughfullvirtualizationforcestheuseofshadowpagetables,
+to give the illusion of contiguous physical memory, Xen is not soconstrained. Indeed, Xen need only be involved in page table up-
+dates, to prevent guest OSes from making unacceptable changes.
+Thus we avoid the overhead and additional complexity associatedwith the use of shadow page tables — the approach in Xen is to
+register guest OS page tables directly with the MMU, and restrict
+guest OSes to read-only access. Page table updates are passed toXen via a hypercall; to ensure safety, requests are validated before
+being applied.
+To aid validation, we associate a type and reference count with
+each machine page frame. A frame may have any one of the fol-lowing mutually-exclusive types at any point in time: page direc-
+tory(PD),pagetable( PT),localdescriptortable( LDT),globalde-
+scriptor table ( GDT), or writable ( RW). Note that a guest OS may
+alwayscreatereadablemappingstoitsownpageframes,regardless
+of their current types. A frame may only safely be retasked when
+itsreference count iszero. Thismechanism isusedtomaintain theinvariantsrequiredforsafety;forexample,adomaincannothavea
+writable mapping to any part of a page table as this would require
+the frameconcerned tosimultaneouslybe oftypes PTandRW.
+The type system isalso used to track which frames have already
+been validated for use in page tables. To this end, guest OSes indi-
+cate when a frame is allocated for page-table use — this requires aone-off validation of every entry in the frame by Xen, after which
+169 
+its type is pinned to PDorPTas appropriate, until a subsequent
+unpin request from the guest OS. This is particularly useful whenchanging the page table basepointer, asitobviates the need toval-idatethenewpagetableoneverycontextswitch. Notethataframe
+cannot be retasked until it is both unpinned and its reference count
+has reduced to zero – this prevents guest OSes from using unpinrequeststo circumvent thereference-counting mechanism.
+To minimize the number of hypercalls required, guest OSes can
+locallyqueueupdatesbeforeapplyinganentirebatchwithasinglehypercall — this is particularly beneﬁcial when creating new ad-
+dress spaces. However we must ensure that updates are committed
+earlyenoughtoguaranteecorrectness. Fortunately,aguestOSwilltypicallyexecuteaTLBﬂushbeforetheﬁrstuseofanewmapping:
+thisensuresthatanycachedtranslationisinvalidated. Hence,com-
+mitting pending updates immediately before a TLB ﬂush usuallysufﬁces for correctness. However, some guest OSes elide the ﬂushwhen it is certain that no stale entry exists in the TLB. In this case
+it is possible that the ﬁrst attempted use of the new mapping will
+cause a page-not-present fault. Hence the guest OS fault handlermust check for outstanding updates; if any are found then they are
+ﬂushedandthe faultinginstructionisretried.
+3.3.4 Physicalmemory
+Theinitialmemoryallocation,or reservation ,foreachdomainis
+speciﬁedatthetimeofitscreation;memoryisthusstaticallyparti-
+tioned between domains, providing strong isolation. A maximum-
+allowable reservation may also be speciﬁed: if memory pressurewithin a domain increases, it may then attempt to claim additional
+memory pages from Xen, up to this reservation limit. Conversely,
+ifadomainwishestosaveresources,perhapstoavoidincurringun-necessary costs, it can reduce its memory reservation by releasing
+memorypages back toXen.
+XenoLinux implements a balloon driver [42], which adjusts a
+domain’s memory usage by passing memory pages back and forthbetween Xen and XenoLinux’s page allocator. Although we could
+modifyLinux’smemory-managementroutinesdirectly,theballoon
+drivermakesadjustmentsbyusingexistingOSfunctions,thussim-plifying the Linux porting effort. However, paravirtualization can
+be used to extend the capabilities of the balloon driver; for exam-
+ple,theout-of-memoryhandlingmechanismintheguestOScanbemodiﬁedtoautomaticallyalleviatememorypressurebyrequesting
+morememory fromXen.
+Most operating systems assume that memory comprises at most
+afewlargecontiguousextents. BecauseXendoesnotguaranteeto
+allocate contiguous regions of memory, guest OSes will typically
+create for themselves the illusion of contiguous physical memory ,
+even though their underlying allocation of hardware memory is
+sparse. Mapping from physical to hardware addresses is entirely
+the responsibility of the guest OS, which can simply maintain anarray indexed by physical page frame number. Xen supports efﬁ-cient hardware-to-physical mapping by providing a shared transla-
+tion array that is directly readable by all domains – updates to this
+array are validated by Xen to ensure that the OS concerned ownstherelevant hardware page frames.
+Note that even if a guest OS chooses to ignore hardware ad-
+dresses in most cases, it must use the translation tables when ac-cessingitspagetables(whichnecessarilyusehardwareaddresses).
+Hardware addresses may also be exposed to limited parts of the
+OS’smemory-managementsystemtooptimizememoryaccess. Forexample, a guest OS might allocate particular hardware pages so
+as to optimize placement within a physically indexed cache [24],
+or map naturally aligned contiguous portions of hardware memoryusingsuperpages[30].3.3.5 Network
+Xen provides the abstraction of a virtual ﬁrewall-router (VFR),
+whereeachdomainhasoneormorenetworkinterfaces(VIFs)log-ically attached to the VFR. A VIF looks somewhat like a modern
+network interface card: there are two I/O rings of buffer descrip-
+tors, one for transmit and one for receive. Each direction also hasa list of associated rules of the form (<pattern >,<action >)—i f
+thepatternmatches thenthe associated actionisapplied.
+Domain0 isresponsibleforinsertingandremovingrules. Intyp-
+icalcases,ruleswillbeinstalledtopreventIPsourceaddressspoof-ing, and to ensure correct demultiplexing based on destination IP
+address and port. Rules may also be associated with hardware in-
+terfaces on the VFR. In particular, we may install rules to performtraditional ﬁrewalling functions such as preventing incoming con-
+nection attempts oninsecure ports.
+To transmit a packet, the guest OS simply enqueues a buffer
+descriptor onto the transmit ring. Xen copies the descriptor and,
+to ensure safety, then copies the packet header and executes any
+matchingﬁlterrules. Thepacketpayloadisnotcopiedsinceweusescatter-gather DMA; however note that the relevant page framesmust be pinned until transmission is complete. To ensure fairness,
+Xen implements asimpleround-robinpacket scheduler.
+To efﬁciently implement packet reception, we require the guest
+OS to exchange an unused page frame for each packet it receives;
+this avoids the need to copy the packet between Xen and the guest
+OS,althoughitrequiresthatpage-alignedreceivebuffersbequeuedat the network interface. When a packet is received, Xen immedi-
+ately checks the set of receive rules to determine the destination
+VIF, and exchanges the packet buffer for a page frame on the rele-vant receive ring. Ifnoframe isavailable, thepacket isdropped.
+3.3.6 Disk
+OnlyDomain0 hasdirectuncheckedaccesstophysical(IDEand
+SCSI) disks. All other domains access persistent storage throughthe abstraction of virtual block devices (VBDs), which are created
+and conﬁgured by management software running within Domain0.
+Allowing Domain0 to manage the VBDs keeps the mechanisms
+withinXenverysimpleandavoidsmoreintricatesolutionssuchas
+the UDFsusedbythe Exokernel [23].
+A VBD comprises a list of extents with associated ownership
+and access control information, and is accessed via the I/O ring
+mechanism. A typical guest OS disk scheduling algorithm will re-
+order requests prior to enqueuing them on the ring in an attempt toreduceresponsetime,andtoapplydifferentiatedservice(forexam-
+ple, it may choose to aggressively schedule synchronous metadata
+requests at the expense of speculative readahead requests). How-ever,becauseXenhasmorecompleteknowledgeoftheactualdisk
+layout, we also support reordering within Xen, and so responses
+may bereturned outoforder. A VBDthusappearsto theguestOSsomewhat like aSCSIdisk.
+A translation table is maintained within the hypervisor for each
+VBD; the entries within this table are installed and managed by
+Domain0 via a privileged control interface. On receiving a disk
+request, Xen inspects the VBD identiﬁer and offset and produces
+the corresponding sector address and physical device. Permission
+checks also take place at this time. Zero-copy data transfer takesplace using DMA between the disk and pinned memory pages in
+the requestingdomain.
+Xen services batchesof requests from competing domains in a
+simple round-robin fashion; these are then passed to a standard el-
+evator scheduler before reaching the disk hardware. Domains may
+explicitly pass down reorder barriers to prevent reordering when
+this is necessary to maintain higher level semantics (e.g. when us-
+170 
+ing a write-ahead log). The low-level scheduling gives us good
+throughput,whilethebatchingofrequestsprovidesreasonablyfairaccess. Future work will investigate providing more predictableisolation and differentiated service, perhaps using existing tech-
+niquesand schedulers[39].
+3.4 BuildingaNewDomain
+The task of building the initial guest OS structures for a new
+domain is mostly delegated to Domain0 which uses its privileged
+controlinterfaces(Section2.3)toaccessthenewdomain’smemoryand inform Xen of initial register state. This approach has a num-berofadvantagescomparedwithbuildingadomainentirelywithin
+Xen, including reduced hypervisor complexity and improved ro-
+bustness (accesses to the privileged interface are sanity checkedwhich allowed ustocatch many bugsduringinitialdevelopment).
+Most important, however, is the ease with which the building
+process can be extended and specialized to cope with new guestOSes. For example, the boot-time address space assumed by the
+Linux kernel is considerably simpler than that expected by Win-
+dows XP. It would be possible to specify a ﬁxed initial memorylayout for all guest OSes, but this would require additional boot-
+strap code within every guest OS to lay things out as required by
+therestoftheOS.Unfortunatelythistypeofcodeistrickytoimple-ment correctly; for simplicity and robustness it is therefore betterto implement it within Domain0 which can provide much richer
+diagnosticsanddebugging supportthana bootstrapenvironment.
+4. EVALUATION
+In this section we present a thorough performance evaluation
+of Xen. We begin by benchmarking Xen against a number of al-ternative virtualization techniques, then compare the total system
+throughput executing multiple applications concurrently on a sin-
+gle native operating system against running each application in itsown virtual machine. We then evaluate the performance isolationXenprovidesbetweenguestOSes,andassessthetotaloverheadof
+runninglargenumbersofoperatingsystemsonthesamehardware.
+For these measurements, we have used our XenoLinux port (basedon Linux 2.4.21) as this is our most mature guest OS. We expect
+the relative overheads for our Windows XP and NetBSD ports to
+besimilarbuthave yet toconduct afullevaluation.
+There are a number of preexisting solutions for running multi-
+ple copies of Linux on the same machine. VMware offers several
+commercial products that provide virtual x86 machines on whichunmodiﬁed copies of Linux may be booted. The most commonly
+used version is VMware Workstation, which consists of a set of
+privileged kernel extensions to a ‘host’ operating system. BothWindows and Linux hosts are supported. VMware also offer an
+enhanced product called ESX Server which replaces the host OS
+with a dedicated kernel. By doing so, it gains some performancebeneﬁt over the workstation product. ESX Server also supports aparavirtualized interfacetothenetworkthatcanbeaccessedbyin-
+stalling a special device driver (vmxnet) into the guest OS, where
+deployment circumstances permit.
+WehavesubjectedESXServertothebenchmarksuitesdescribed
+below, but sadly are prevented from reporting quantitative results
+duetothetermsoftheproduct’sEndUserLicenseAgreement. Weare authorized simply to say that “Xen signiﬁcantly outperforms
+ESX Server” on all benchmarks in the suite. We present results
+for VMware Workstation 3.2, the most recent VMware product re-leased without the benchmarking restriction, running over a Linux
+hostOS.
+WealsopresentresultsforUser-modeLinux(UML),anincreas-
+ingly popular platform for virtual hosting. UML is a port of Linuxtorunasauser-spaceprocessonaLinuxhost. LikeXenoLinux,the
+changes required are restricted to the architecture dependent codebase. However, the UML code bears little similarity to the nativex86 port due to the very different nature of the execution environ-
+ments. Although UML can run on an unmodiﬁed Linux host, we
+present results for the ‘Single Kernel Address Space’ (skas3) vari-ant thatexploitspatches tothe hostOStoimprove performance.
+Wealsoinvestigatedthreeothervirtualizationtechniquesforrun-
+ning ported versions of Linux on the same x86 machine. Connec-tix’s Virtual PC and forthcoming Virtual Server products (now ac-
+quired by Microsoft) are similar in design to VMware’s, providing
+fullx86virtualization. SinceallversionsofVirtualPChavebench-marking restrictions in their license agreements we did not subject
+them to closer analysis. UMLinux is similar in concept to UML
+butisadifferentcodebaseandhasyettoachievethesamelevelofperformance, so we omit the results. Work to improve the perfor-manceofUMLinuxthroughhostOSmodiﬁcationsisongoing[25].
+AlthoughPlex86wasoriginallyageneralpurposex86VMM,ithas
+now been retargeted to support just Linux guest OSes. The guestOS must be specially compiled to run on Plex86, but the source
+changes from native x86 are trivial. The performance of Plex86 is
+currently wellbelow the othertechniques.
+AlltheexperimentswereperformedonaDell2650dualproces-
+sor2.4GHzXeonserverwith2GBRAM,aBroadcomTigon3Gi-
+gabitEthernetNIC,andasingleHitachiDK32EJ146GB10kRPMSCSI disk. Linux version 2.4.21 was used throughout, compiled
+for architecture i686for the native and VMware guest OS exper-
+iments, for xeno-i686 when running on Xen, and architecture um
+when running on UML. The Xeon processors in the machine sup-port SMT (“hyperthreading”), but this was disabled because none
+of the kernels currently have SMT-aware schedulers. We ensured
+that the total amount of memory available to all guest OSes plustheirVMMwasequaltothetotalamountavailabletonativeLinux.
+The RedHat 7.2 distribution was used throughout, installed on
+ext3 ﬁle systems. The VMs were conﬁgured to use the same diskpartitions in ‘persistent raw mode’, which yielded the best perfor-
+mance. Usingthe sameﬁlesystemimage alsoeliminated potential
+differences indiskseektimesand transferrates.
+4.1 Relative Performance
+Wehaveperformedabatteryofexperimentsinordertoevaluate
+theoverheadofthevariousvirtualizationtechniquesrelativetorun-
+ning on the ‘bare metal’. Complex application-level benchmarksthatexercisethewholesystemhavebeenemployedtocharacterize
+performance under a range of server-type workloads. Since nei-
+ther Xen nor any of the VMware products currently support mul-tiprocessor guest OSes (although they are themselves both SMP
+capable), the test machine was conﬁgured with one CPU for these
+experiments;weexamineperformancewithconcurrentguestOSeslater. Theresultspresented arethe median ofseven trials.
+The ﬁrst cluster of bars in Figure 3 represents a relatively easy
+scenario for the VMMs. The SPEC CPU suite contains a series
+oflong-runningcomputationally-intensiveapplicationsintendedtomeasuretheperformanceofasystem’sprocessor,memorysystem,
+and compiler quality. The suite performs little I/O and has little
+interaction with the OS. With almost all CPU time spent executinginuser-space code, allthree VMMsexhibit lowoverhead.
+The next set of bars show the total elapsed time taken to build
+a default conﬁguration of the Linux 2.4.21 kernel on a local ext3ﬁle system with gcc 2.96. Native Linux spends about 7% of the
+CPU time in the OS, mainly performing ﬁle I/O, scheduling and
+memorymanagement. InthecaseoftheVMMs,this‘systemtime’is expanded to a greater or lesser degree: whereas Xen incurs a
+171 
+L567
+X567
+V554
+U550
+SPEC INT2000 (score)L263
+X271
+V334
+U535
+Linux build time (s)L172
+X158
+V80
+U65
+OSDB-IR (tup/s)L1714
+X1633
+V199
+U306
+OSDB-OLTP (tup/s)L418
+X400
+V310
+U111
+dbench (score)L518
+X514
+V150
+U172
+SPEC WEB99 (score)0.00.10.20.30.40.50.60.70.80.91.01.1Relative score to Linux
+Figure 3: Relative performance ofnativeLinux(L),XenoLinux(X),VMware workstation3.2(V)andUser-Mode Linux(U).
+mere 3% overhead, the other VMMs experience a more signiﬁcant
+slowdown.
+Two experiments were performed using the PostgreSQL 7.1.3
+database,exercisedbytheOpenSourceDatabaseBenchmarksuite
+(OSDB) in its default conﬁguration. We present results for the
+multi-userInformationRetrieval(IR)andOn-LineTransactionPro-cessing (OLTP) workloads, both measured in tuples per second. A
+small modiﬁcation to the suite’s test harness was required to pro-
+duce correct results, due to a UML bug which loses virtual-timerinterrupts under high load. The benchmark drives the databasevia PostgreSQL’s native API (callable SQL) over a Unix domain
+socket. PostgreSQL places considerable load on the operating sys-
+tem, and this is reﬂected in the substantial virtualization overheadsexperiencedbyVMwareandUML.Inparticular,theOLTPbench-
+markrequiresmanysynchronousdiskoperations,resultinginmany
+protectiondomain transitions.
+Thedbench program is a ﬁle system benchmark derived from
+the industry-standard ‘NetBench’. It emulates the load placed on a
+ﬁle server by Windows 95 clients. Here, we examine the through-put experienced by a single client performing around 90,000 ﬁle
+systemoperations.
+SPECWEB99isacomplexapplication-levelbenchmarkforeval-
+uatingwebserversandthesystemsthathostthem. Theworkloadisacomplexmixofpagerequests: 30%requiredynamiccontentgen-
+eration, 16% are HTTP POST operations and 0.5% execute a CGI
+script. As the server runs it generates access and POST logs, sothe disk workload is not solely read-only. Measurements therefore
+reﬂectgeneralOSperformance,includingﬁlesystemandnetwork,
+inaddition totheweb serveritself.
+A number of client machines are used to generate load for the
+server under test, with each machine simulating a collection of
+users concurrently accessing the web site. The benchmark is runrepeatedly with different numbers of simulated users to determine
+themaximumnumberthatcanbesupported. SPECWEB99deﬁnes
+aminimumQualityofServicethatsimulatedusersmustreceive inorder to be ‘conformant’ and hence count toward the score: usersmust receive an aggregate bandwidth in excess of 320Kb/s over a
+series of requests. A warm-up phase is allowed in which the num-ber of simultaneous clients is slowly increased, allowing servers to
+preload theirbuffercaches.
+For our experimental setup we used the Apache HTTP server
+version 1.3.27, installing the modspecweb99 plug-in to perform
+most but not all of the dynamic content generation — SPEC rules
+require 0.5% of requests to use full CGI, forking a separate pro-cess. Better absolute performance numbers can be achieved with
+the assistance of “TUX”, the Linux in-kernel static content web
+server,butwechosenottousethisaswefeltitwaslesslikelytoberepresentative of our real-world target applications. Furthermore,although Xen’s performance improves when using TUX, VMware
+suffers badly due to the increased proportion of time spent emulat-
+ing ring0while executing the guestOSkernel.
+SPECWEB99exercisesthewholesystem. Duringthemeasure-
+ment period there is up to 180Mb/s of TCP network trafﬁc and
+considerablediskread-writeactivityona2GBdataset. Thebench-mark is CPU-bound, and a signiﬁcant proportion of the time is
+spent within the guest OS kernel, performing network stack pro-
+cessing, ﬁle system operations, and scheduling between the manyhttpdprocesses that Apache needs to handle the offered load.
+XenoLinuxfareswell,achievingwithin1%ofnativeLinuxperfor-
+mance. VMware and UML both struggle, supporting less than athirdofthe numberofclients ofthenative Linuxsystem.
+4.2 OperatingSystemBenchmarks
+TomorepreciselymeasuretheareasofoverheadwithinXenand
+the other VMMs, we performed a number of smaller experiments
+targeting particular subsystems. We examined the overhead of vir-tualization as measured by McVoy’s lmbenchprogram [29]. We
+used version 3.0-a3 as this addresses many of the issues regard-
+ing the ﬁdelity of the tool raised by Seltzer’s hbench[6]. The OS
+performancesubsetofthelmbenchsuiteconsistof37microbench-
+marks. InthenativeLinuxcase,wepresentﬁguresforbothunipro-
+cessor (L-UP) and SMP (L-SMP) kernels as we were somewhatsurprised by the performance overhead incurred by the extra lock-
+ing intheSMPsystemin manycases.
+In 24 of the 37 microbenchmarks, XenoLinux performs simi-
+larly to native Linux, tracking the uniprocessor Linux kernel per-
+172 
+Conﬁgnull
+callnull
+I/O statopen
+closeslct
+TCPsig
+instsig
+hndlfork
+procexec
+procsh
+proc
+L-SMP0.53 0.81 2.10 3.51 23.2 0.83 2.94 143 601 4k2
+L-UP0.45 0.50 1.28 1.92 5.70 0.68 2.49 110 530 4k0
+Xen0.46 0.50 1.22 1.88 5.69 0.69 1.75 198 768 4k8
+VMW0.73 0.83 1.88 2.99 11.1 1.02 4.63 874 2k3 10k
+UML24.7 25.1 36.1 62.8 39.9 26.0 46.0 21k 33k 58k
+Table3:lmbench : Processes-timesin µs
+Conﬁg2p
+0K2p
+16K2p
+64K8p
+16K8p
+64K16p
+16K16p
+64K
+L-SMP1.69 1.88 2.03 2.36 26.8 4.79 38.4
+L-UP0.77 0.91 1.06 1.03 24.3 3.61 37.6
+Xen1.97 2.22 2.67 3.07 28.7 7.08 39.4
+VMW18.1 17.6 21.3 22.4 51.6 41.7 72.2
+UML15.5 14.6 14.4 16.3 36.8 23.6 52.0
+Table4:lmbench : Contextswitchingtimesin µs
+Conﬁg 0KFile 10KFile Mmap Prot Page
+create delete create delete lat fault fault
+L-SMP44.9 24.2 123 45.2 99.0 1.33 1.88
+L-UP32.1 6.08 66.0 12.5 68.0 1.06 1.42
+Xen32.5 5.86 68.2 13.6 1391.402.73
+VMW35.3 9.3 85.6 21.4 620 7.53 12.4
+UML130 65.7 250 113 1k4 21.8 26.3
+Table5:lmbench : File&VM systemlatenciesin µs
+formance closely and outperforming the SMP kernel. In Tables 3
+to 5 we show results which exhibit interesting performance varia-tions among the test systems; particularly large penalties for Xenareshownin boldface.
+In the process microbenchmarks (Table 3), Xen exhibits slower
+fork,execandshperformance than native Linux. This is expected,
+since these operations require large numbers of page table updates
+which mustallbe veriﬁed byXen. However, the paravirtualization
+approachallowsXenoLinuxtobatchupdaterequests. Creatingnewpage tables presents an ideal case: because there is no reason to
+commitpendingupdatessooner,XenoLinuxcanamortizeeachhy-
+percallacross2048updates(themaximumsizeofitsbatchbuffer).Hence each update hypercall constructs8MB of address space.
+Table 4 shows context switch times between different numbers
+of processes with different working set sizes. Xen incurs an ex-tra overhead between 1 µs and 3 µs, as it executes a hypercall to
+change the page table base. However, context switch results for
+largerworkingsetsizes(perhapsmorerepresentative ofrealappli-cations) show that the overhead is small compared with cache ef-fects. Unusually,VMwareWorkstationisinferiortoUMLonthese
+microbenchmarks; however, this is one area where enhancements
+inESXServerare ableto reduce theoverhead.
+Themmap latency andpage fault latency results shown in Ta-
+ble5 areinteresting sincethey require twotransitionsintoXen per
+page: onetotakethehardwarefaultandpassthedetailstotheguestOS,andasecondtoinstalltheupdatedpagetableentryontheguest
+OS’sbehalf. Despite this,the overhead isrelatively modest.
+OnesmallanomalyinTable3isthatXenoLinuxhaslowersignal-
+handling latency than native Linux. This benchmark does not re-
+quireanycallsintoXenatall,andthe0.75 µs(30%)speedupispre-
+sumably due to a fortuitous cache alignment in XenoLinux, henceunderliningthe dangersoftaking microbenchmarks tooseriously.TCPMTU 1500 TCPMTU 500
+TX RX TX RX
+Linux897 897 602 544
+Xen897 (-0%) 897 (-0%) 516 (-14%) 467 (-14%)
+VMW291 (-68%) 615 (-31%) 101 (-83%) 137 (-75%)
+UML165 (-82%) 203 (-77%) 61.1(-90%) 91.4(-83%)
+Table 6:ttcp: BandwidthinMb/s
+4.2.1 Networkperformance
+Inordertoevaluatetheoverheadofvirtualizingthenetwork,we
+examineTCPperformanceoveraGigabitEthernetLAN.Inallex-periments we use a similarly-conﬁgured SMP box running native
+Linux as one of the endpoints. This enables us to measure receive
+and transmit performance independently. The ttcpbenchmark was
+used to perform these measurements. Both sender and receiver ap-
+plications were conﬁgured with a socket buffer size of 128kB, as
+wefoundthisgavebestperformanceforalltestedsystems. There-sultspresentedareamedianof9experimentstransferring400MB.
+Table 6 presents two sets of results, one using the default Ether-
+net MTU of 1500 bytes, the other using a 500-byte MTU (chosenasitiscommonlyusedbydial-upPPPclients). Theresultsdemon-stratethatthepage-ﬂippingtechniqueemployedbytheXenoLinux
+virtual network driver avoids the overhead of data copying and
+henceachievesaverylowper-byteoverhead. WithanMTUof500bytes,theper-packetoverheadsdominate. Theextracomplexityof
+transmit ﬁrewalling and receive demultiplexing adversely impact
+the throughput, butonlyby 14%.
+VMware emulate a ‘pcnet32’ network card for communicating
+with the guest OS which provides a relatively clean DMA-based
+interface. ESX Server also supports a special ‘vmxnet’ driver forcompatibleguestOSes,whichprovidessigniﬁcantnetworkingper-
+formance improvements.
+4.3 ConcurrentVirtualMachines
+In this section, we compare the performance of running mul-
+tiple applications in their own guest OS against running them on
+the same native operating system. Our focus is on the results us-ing Xen, but we comment on the performance of the other VMMs
+where applicable.
+Figure 4 shows the results of running 1, 2, 4, 8 and 16 copies
+of the SPEC WEB99 benchmark in parallel on a two CPU ma-
+chine. The native Linux was conﬁgured for SMP; on it we ran
+multiple copies of Apache as concurrent processes. In Xen’s case,each instance of SPEC WEB99 was run in its own uniprocessor
+Linux guest OS (along with an sshdand other management pro-
+cesses). DifferentTCPportnumberswereusedforeachwebserverto enable the copies to be run in parallel. Note that the size of theSPEC data set required for csimultaneous connections is (25 +
+(c×0.66))×4.88MBytesorapproximately3.3GBfor1000con-
+nections. This is sufﬁciently large to thoroughly exercise the diskand buffercache subsystems.
+AchievinggoodSPECWEB99scoresrequiresbothhighthrough-
+putandboundedlatency: forexample,ifaclientrequestgetsstalledduetoabadlydelayeddiskread,thentheconnectionwillbeclassed
+as non conforming and won’t contribute to the score. Hence, it is
+importantthattheVMMschedulesdomainsinatimelyfashion. Bydefault, Xen usesa5mstimeslice.
+In the case of a single Apache instance, the addition of a sec-
+ond CPU enables native Linux to improve on the score reportedin section 4.1 by 28%, to 662 conformant clients. However, the
+173 
+L
+662
+X
+-16.3% (non-SMP guest)
+1
+1001
+L
+924
+X
+2
+887
+L
+896
+X
+4
+842
+L
+906
+X
+8
+880
+L
+874
+X
+1602004006008001000Aggregate number of conforming clients
+Simultaneous SPEC WEB99 Instances on Linux (L) and Xen(X)
+Figure4: SPECWEB99for1,2,4,8and16concurrentApache
+servers: highervalues arebetter.
+best aggregate throughput is achieved when running two Apache
+instances,suggestingthatApache1.3.27mayhavesomeSMPscal-abilityissues.
+When running a single domain, Xen is hampered by a lack of
+support for SMP guest OSes. However, Xen’s interrupt load bal-ancer identiﬁes the idle CPU and diverts all interrupt processing
+to it, improving on the single CPU score by 9%. As the number
+ofdomainsincreases,Xen’sperformanceimprovestowithinafewpercent ofthenative case.
+Next we performed a series of experiments running multiple in-
+stancesofPostgreSQLexercisedbytheOSDBsuite. Runningmul-
+tiple PostgreSQL instances on a single Linux OS proved difﬁcult,asitistypicaltorunasinglePostgreSQLinstancesupportingmul-
+tiple databases. However, this would prevent different users hav-
+ingseparatedatabaseconﬁgurations. Weresortedtoacombinationofchroot and software patches to avoid SysV IPC name-space
+clashes between different PostgreSQL instances. In contrast, Xen
+allows each instance to be started in its own domain allowing easyconﬁguration.
+In Figure 5 we show the aggregate throughput Xen achieves
+when running 1, 2, 4 and 8 instances of OSDB-IR and OSDB-OLTP. When a second domain is added, full utilization of the sec-
+ondCPUalmostdoublesthetotalthroughput. Increasingthe num-
+berofdomainsfurthercausessomereductioninaggregatethrough-putwhichcanbeattributedtoincreasedcontextswitchinganddiskhead movement. Aggregate scores running multiple PostgreSQL
+instances on a single Linux OS are 25-35% lowerthan the equiv-
+alent scores using Xen. The cause is not fully understood, but itappearsthatPostgreSQLhasSMPscalabilityissuescombinedwith
+poorutilization ofLinux’sblock cache.
+Figure 5 also demonstrates performance differentiation between
+8 domains. Xen’s schedulers were conﬁgured to give each domain
+anintegerweightbetween1and8. Theresultingthroughputscores
+for each domain are reﬂected in the different banding on the bar.In the IR benchmark, the weighting has a precise inﬂuence over
+throughput and each segment is within 4% of its expected size.
+However, in the OLTP case, domains given a larger share of re-sourcestonotachieve proportionallyhigher scores: Thehighlevel12488(diff)
+OSDB-IR12488(diff)
+OSDB-OLTP158
+318
+289
+282
+290
+1661
+3289
+2833
+2685
+2104
+0.00.51.01.52.0Aggregate score relative to single instance
+Simultaneous OSDB-IR and OSDB-OLTP Instances on Xen
+Figure 5: Performance of multiple instances of PostgreSQL
+runningOSDBinseparateXendomains. 8(diff)barsshowper-formance variation withdifferentscheduler weights.
+of synchronous disk activity highlights a weakness in our current
+diskscheduling algorithmcausing them tounder-perform.
+4.4 PerformanceIsolation
+In order to demonstrate the performance isolation provided by
+Xen,wehopedtoperforma“bakeoff”betweenXenandotherOS-
+based implementations of performance isolation techniques suchas resource containers. However, at the current time there appearto be no implementations based on Linux 2.4 available for down-
+load. QLinux2.4hasyettobereleasedandistargetedatproviding
+QoS for multimedia applications rather than providing full defen-siveisolationinaserverenvironment. Ensim’sLinux-basedPrivate
+Virtual Server product appears to be the most complete implemen-
+tation,reportedlyencompassingcontrolofCPU,disk,networkandphysicalmemoryresources[14]. WeareindiscussionswithEnsim
+and hope to be able to report results of a comparative evaluation at
+a laterdate.
+In the absence of a side-by-side comparison, we present results
+showing that Xen’s performance isolation works as expected, even
+in the presence of a malicious workload. We ran 4 domains con-ﬁgured with equal resource allocations, with two domains running
+previously-measuredworkloads(PostgreSQL/OSDB-IRandSPEC
+WEB99),andtwodomainseachrunningapairofextremelyantiso-cialprocesses. Thethirddomainconcurrentlyranadiskbandwidthhog (sustained dd) together with a ﬁle system intensive workload
+targeting huge numbers of small ﬁle creations within large direc-
+tories. The fourth domain ran a ‘fork bomb’ at the same time asavirtualmemoryintensiveapplicationwhichattemptedtoallocate
+andtouch3GBofvirtualmemoryand,onfailure,freedeverypage
+and then restarted.
+WefoundthatboththeOSDB-IRandSPECWEB99resultswere
+only marginally affected by the behaviour of the two domains run-
+ning disruptive processes — respectively achieving 4% and 2%below the results reported earlier. We attribute this to the over-
+head of extra context switches and cache effects. We regard this as
+somewhat fortuitous in light of our current relatively simple diskscheduling algorithm, but under this scenario it appeared to pro-
+174 
+1.01.21.41.61.82.0
+ 0 10 20 30 40 50 60 70 80 90 100 110 120 130Normalised Throughput
+Concurrent Processes/DomainsLinux
+XenoLinux (50ms time slice)
+XenoLinux (5ms time slice)
+Figure 6: Normalized aggregate performance of a subset of
+SPECCINT2000runningconcurrently on1-128domains
+videsufﬁcientisolationfromthepage-swappinganddisk-intensive
+activities of the other domains for the benchmarks to make good
+progress. VMwareWorkstationachievessimilarlevelsofisolation,
+butatreduced levelsofabsoluteperformance.
+We repeated the same experiment under native Linux. Unsur-
+prisingly,thedisruptiveprocessesrenderedthemachinecompletely
+unusable for the two benchmark processes, causing almost all theCPUtime tobespent intheOS.
+4.5 Scalability
+In this section, we examine Xen’s ability to scale to its target
+of 100 domains. We discuss the memory requirements of runningmanyinstancesofaguestOSandassociatedapplications,andmea-
+surethe CPUperformance overhead oftheirexecution.
+We evaluated the minimum physical memory requirements of
+a domain booted with XenoLinux and running the default set ofRH7.2daemons,alongwithan sshdandApachewebserver. The
+domainwasgivenareservationof64MBonboot,limitingthemax-
+imum size to which it could grow. The guest OS was instructed tominimize its memory footprint by returning all pages possible to
+Xen. Without any swap space conﬁgured, the domain was able to
+reduce its memory footprint to 6.2MB; allowing the use of a swapdevicereducedthisfurtherto4.2MB.Aquiescentdomainisableto
+stay in this reduced state until an incoming HTTP request or peri-
+odic service causes more memory to be required. In this event, theguest OS will request pages back from Xen, growing its footprint
+asrequiredupto itsconﬁgured ceiling.
+This demonstrates that memory usage overhead is unlikely to
+be a problem for running 100 domains on a modern server class
+machine—farmorememorywilltypicallybecommittedtoappli-
+cation data and buffer cache usage than to OS or application textpages. Xen itself maintains only a ﬁxed 20kB of state per domain,unlikeother VMMsthatmustmaintain shadow page tablesetc.
+Finally, we examine the overhead of context switching between
+large numbers of domains rather than simply between processes.Figure6showsthenormalizedaggregatethroughputobtainedwhen
+running a small subset of the SPEC CINT2000 suite concurrently
+onbetween1and128domainsorprocessesonourdualCPUserver.The line representing native Linux is almost ﬂat, indicating that
+forthisbenchmarkthereisnolossofaggregateperformancewhen
+schedulingbetweensomanyprocesses;Linuxidentiﬁesthemallascompute bound, and schedules them with long time slices of 50ms
+or more. In contrast, the lower line indicates Xen’s throughput
+whenconﬁguredwithitsdefault5msmaximumscheduling‘slice’.Although operating 128 simultaneously compute bound processeson a single server is unlikely to be commonplace in our target ap-
+plication area, Xen copes relatively well: running 128 domains welosejust7.5%oftotal throughputrelative toLinux.
+Underthisextremeload,wemeasureduser-to-userUDPlatency
+to one of the domains running the SPEC CINT2000 subset. We
+measuredmeanresponsetimesof147ms(standarddeviation97ms).Repeating the experiment against a 129
+thdomain that was other-
+wise idle,we recorded amean response timeof5.4ms(s.d. 16ms).
+Theseﬁguresareveryencouraging—despitethesubstantialback-ground load,interactive domainsremain responsive.
+To determine the cause of the 7.5% performance reduction, we
+set Xen’s scheduling ‘slice’ to 50ms (the default value used byESXServer). Theresultwasathroughputcurvethattrackednative
+Linux’s closely, almost eliminating the performance gap. How-
+ever, as might be expected, interactive performance at high load isadversely impacted by thesesettings.
+5. RELATEDWORK
+Virtualization has been applied to operating systems both com-
+merciallyandinresearchfornearlythirtyyears. IBMVM/370[19,38]ﬁrstmadeuseofvirtualizationtoallowbinarysupportforlegacycode. VMware [10] and Connectix [8] both virtualize commodity
+PC hardware, allowing multiple operating systems to run on a sin-
+gle host. All of these examples implement a full virtualization of(at least a subset of) the underlying hardware, rather than paravir-
+tualizing and presenting a modiﬁed interface to the guest OS. As
+shown in our evaluation, the decision to present a full virtualiza-tion, although able to more easily support off-the-shelf operating
+systems,hasdetremental consequences forperformance.
+The virtual machine monitor approach has also been used by
+Disco to allow commodity operating systems to run efﬁciently on
+ccNUMA machines [7, 18]. A small number of changes had to be
+made to the hosted operating systems to enable virtualized execu-tion on the MIPS architecture. In addition, certain other changeswere made forperformance reasons.
+At present, we are aware of two other systems which take the
+paravirtualization approach: IBM presently supports a paravirtual-ized version of Linux for their zSeries mainframes, allowing large
+numbers of Linux instances to run simultaneously. Denali [44],
+discussed previously, is a contemporary isolation kernel which at-tempts to provide a system capable of hosting vast numbers of vir-
+tualized OSinstances.
+In addition to Denali, we are aware of two other efforts to use
+low-level virtualization to build an infrastructure for distributed
+systems. The vMatrix [1] project is based on VMware and aims
+to build a platform for moving code between different machines.As vMatrix is developed above VMware, they are more concerned
+with higher-level issues of distribution that those of virtualization
+itself. In addition, IBM provides a “Managed Hosting” service, inwhich virtual Linuxinstancesmay berented onIBMmainframes.
+The PlanetLab [33] project has constructed a distributed infras-
+tructurewhichisintendedtoserveasatestbedfortheresearchand
+development of geographically distributed network services. Theplatformistargetedatresearchersandattemptstodivideindividual
+physicalhostsinto slivers,providingsimultaneouslow-levelaccess
+tousers. Thecurrentdeployment usesVServers[17]andSILK[4]tomanage sharingwithinthe operating system.
+We share some motivation with the operating system extensi-
+bility and active networks communities. However, when runningover Xen there is no need to check for “safe” code, or for guaran-
+teed termination — the only person hurt in either case is the client
+in question. Consequently, Xen provides a more general solution:there is no need for hosted code to be digitally signed by a trusted
+175 
+compiler (as in SPIN [5]), to be accompanied by a safety proof (as
+with PCC [31]), to be written in a particular language (as in Safe-tyNet[22]oranyJava-basedsystem),ortorelyonaparticularmid-dleware (as with mobile-agent systems). These other techniques
+can,ofcourse,continuetobeusedwithinguestOSesrunningover
+Xen. Thismaybeparticularlyusefulforworkloadswithmoretran-sienttaskswhichwouldnotprovideanopportunitytoamortizethe
+costofstartinga new domain.
+A similar argument can be made with regard to language-level
+virtual machine approaches: while a resource-managed JVM [9]
+shouldcertainly be able to hostuntrustedapplications, theseappli-
+cations must necessarily be compiled to Java bytecode and followthat particular system’s security model. Meanwhile, Xen can read-
+ilysupportlanguage-levelvirtualmachinesasapplicationsrunning
+overa guestOS.
+6. DISCUSSIONANDCONCLUSION
+We have presented the Xen hypervisor which partitions the re-
+sources of a computer between domains running guest operating
+systems. Our paravirtualizing design places a particular emphasis
+onperformanceandresourcemanagement. Wehavealsodescribedand evaluated XenoLinux, a fully-featured port of a Linux 2.4 ker-
+nelthat runsover Xen.
+6.1 FutureWork
+WebelievethatXenandXenoLinuxaresufﬁcientlycompleteto
+beusefultoawideraudience,andsointendtomakeapublicrelease
+of our software in the very near future. A beta version is already
+underevaluationbyselectedparties;oncethisphaseiscomplete,ageneral 1.0release willbeannounced on ourprojectpage
+3.
+After the initial release we plan a number of extensions and im-
+provements to Xen. To increase the efﬁciency of virtual block de-
+vices, we intend to implement a shared universal buffer cache in-
+dexed on block contents. This will add controlled data sharing to
+our design without sacriﬁcing isolation. Adding copy-on-write se-
+manticstovirtualblockdeviceswillallowthemtobesafelysharedamongdomains, while stillallowing divergent ﬁlesystems.
+To provide better physical memory performance, we plan to im-
+plement a last-chance page cache (LPC) — effectively a system-
+wide list of free pages, of non-zero length only when machine
+memory is undersubscribed. The LPC is used when the guest OS
+virtual memory system chooses to evict a clean page; rather thandiscarding this completely, it may be added to the tail of the freelist. A fault occurring for that page before it has been reallocated
+byXen can thereforesatisﬁedwithout adiskaccess.
+An important role for Xen is as the basis of the XenoServer
+project which looks beyond individual machines and is building
+the control systems necessary to support an Internet-scale comput-
+inginfrastructure. Keytoourdesignistheideathatresourceusagebe accounted precisely and paid for by the sponsor of that job —
+if payments are made in real cash, we can use a congestion pricing
+strategy [28] to handle excess demand, and use excess revenues topay for additional machines. This necessitates accurate and timely
+I/Oschedulingwithgreaterresiliencetohostileworkloads. Wealso
+plan to incorporate accounting into our block storage architecturebycreating leasesforvirtualblock devices.
+In order to provide better support for the management and ad-
+ministration of XenoServers, we are incorporating more thorough
+support for auditing and forensic logging. We are also developingadditional VFR rules which we hope will allow us to detect and
+prevent a wide range of antisocial network behaviour. Finally, we
+3http://www.cl.cam.ac.uk/netos/xenare continuing our work on XenoXP, focusing in the ﬁrst instance
+on writing network and block device drivers, with the aim of fullysupportingenterprise serverssuchasIIS.
+6.2 Conclusion
+Xen provides an excellent platform for deploying a wide vari-
+etyofnetwork-centricservices,suchaslocalmirroringofdynamicwebcontent,mediastreamtranscodinganddistribution,multiplayer
+gameandvirtualrealityservers,and‘smartproxies’[2]toprovidea
+lessephemeralnetworkpresencefortransiently-connecteddevices.
+Xen directly addresses the single largest barrier to the deploy-
+mentofsuchservices: thepresentinabilitytohosttransientservers
+forshortperiodsoftimeandwithlowinstantiationcosts. Byallow-ing 100 operating systems to run on a single server, we reduce the
+associatedcostsbytwoordersofmagnitude. Furthermore,byturn-
+ingthesetupandconﬁgurationofeachOSintoasoftwareconcern,we facilitate much smaller-granularitytimescales ofhosting.
+As our experimental results show in Section 4, the performance
+ofXenoLinuxoverXenispracticallyequivalenttotheperformanceofthebaselineLinuxsystem. Thisfact,whichcomesfromthecare-fuldesignoftheinterfacebetweenthetwocomponents,meansthat
+thereisnoappreciablecostinhavingtheresourcemanagementfa-
+cilitiesavailable. OurongoingworktoporttheBSDandWindowsXP kernels to operate over Xen is conﬁrming the generality of the
+interface that Xen exposes.
+Acknowledgments
+This work is supported by ESPRC Grant GR/S01894/01 and by
+Microsoft. We would like to thank Evangelos Kotsovinos, Anil
+Madhavapeddy, RussRossand JamesScottfortheircontributions.
+7. REFERENCES
+[1] A. Awadallah andM. Rosenblum. ThevMatrix: A network ofvirtual
+machinemonitors fordynamiccontent distribution. In Proceedings
+ofthe 7thInternationalWorkshoponWebContentCachingand
+Distribution (WCW2002) ,Aug. 2002.
+[2] A. BakreandB. R.Badrinath. I-TCP:indirect TCPformobile hosts.
+InProceedings of the15thInternational Conference onDistributed
+ComputingSystems (ICDCS1995) ,pages 136–143,June 1995.
+[3] G. Banga,P. Druschel, and J. C.Mogul. Resourcecontainers: A new
+facility forresource managementin serversystems. In Proceedings
+ofthe 3rdSymposium onOperating Systems Design and
+Implementation (OSDI 1999) ,pages 45–58,Feb. 1999.
+[4] A. Bavier, T. Voigt, M. Wawrzoniak, L. Peterson, and
+P. Gunningberg.SILK: Scout pathsin theLinuxkernel. TechnicalReport2002-009,Uppsala University, Department ofInformation
+Technology,Feb. 2002.
+[5] B.N. Bershad, S. Savage, P. Pardyak,E. G. Sirer, M. Fiuczynski,
+D. Becker,S. Eggers, andC.Chambers. Extensibility, safety andperformanceinthe SPIN operatingsystem. In Proceedings ofthe
+15thACMSIGOPS Symposium onOperatingSystems Principles ,
+volume29(5)of ACMOperating Systems Review ,pages 267–284,
+Dec. 1995.
+[6] A. BrownandM. Seltzer. Operating System Benchmarkinginthe
+Wake ofLmbench: A Case Studyofthe Performanceof NetBSD ontheIntel x86Architecture. In Proceedings ofthe 1997ACM
+SIGMETRICSConference onMeasurement andModelingof
+ComputerSystems , June 1997.
+[7] E. Bugnion,S. Devine, K. Govil,and M. Rosenblum.Disco:
+Runningcommodityoperatingsystems onscalable multiprocessors.InProceedings of the16thACMSIGOPS Symposium onOperating
+Systems Principles , volume 31(5)of ACMOperating Systems
+Review, pages143–156,Oct. 1997.
+[8] Connectix.Product Overview: ConnectixVirtual Server,2003.
+http://www.connectix.com/products/vs.html .
+176 
+[9] G. Czajkowski andL. Dayn ´es. Multitasking without compromise: a
+virtual machineevolution. ACMSIGPLAN Notices , 36(11):125–138,
+Nov. 2001.Proceedings ofthe 2001ACMSIGPLAN ConferenceonObject Oriented Programming, Systems, Languages and
+Applications (OOPSLA 2001).
+[10] S. Devine, E. Bugnion,andM. Rosenblum.Virtualization system
+includinga virtualmachine monitorforacomputer witha segmentedarchitecture. USPatent , 6397242,Oct. 1998.
+[11] K. J. Duda andD. R. Cheriton.Borrowed-Virtual-Time(BVT)
+scheduling: supportinglatency-sensitive threads ina general-purpose
+scheduler. In Proceedings ofthe 17thACMSIGOPS Symposium on
+Operating Systems Principles , volume33(5)of ACMOperating
+Systems Review , pages 261–276,Kiawah Island Resort, SC, USA,
+Dec. 1999.
+[12] G. W. Dunlap,S. T. King, S. Cinar,M. Basrai, and P.M. Chen.
+ReVirt: EnablingIntrusionAnalysis throughVirtual-Machine
+LoggingandReplay.In Proceedings ofthe 5thSymposium on
+Operating Systems Design andImplementation (OSDI2002) ,A CM
+Operating Systems Review, Winter2002Special Issue, pages
+211–224,Boston, MA, USA, Dec. 2002.
+[13] D. Engler, S. K. Gupta, andF. Kaashoek. AVM: Application-level
+virtual memory.In Proceedings ofthe 5thWorkshoponHot Topicsin
+Operating Systems , pages 72–77,May1995.
+[14] Ensim. Ensim Virtual Private Servers, 2003.
+http://www.ensim.com/products/materials/
+datasheet_vps_051003.pdf .
+[15] K. A. Fraser, S. M. Hand, T. L. Harris, I. M. Leslie, andI.A. Pratt.
+The Xenoservercomputinginfrastructure. Technical ReportUCAM-CL-TR-552,University ofCambridge,ComputerLaboratory, Jan. 2003.
+[16] T. Garﬁnkel, M. Rosenblum, andD. Boneh.Flexible OS Supportand
+Applications forTrusted Computing.In Proceedings of the9th
+WorkshoponHot Topicsin OperatingSystems, Kauai,Hawaii , May
+2003.
+[17] J. Gelinas. Virtual PrivateServers andSecurity Contexts, 2003.
+http://www.solucorp.qc.ca/miscprj/
+s_context.hc .
+[18] K.Govil,D.Teodosiu,Y.Huang,andM.Rosenblum.CellularDisco:
+Resource managementusing virtualclusters onshared-memorymultiprocessors. In Proceedings ofthe17thACM SIGOPS
+Symposium onOperating Systems Principles , volume 33(5)of ACM
+Operating Systems Review , pages154–169,Dec. 1999.
+[19] P. H. Gum. System/370 extendedarchitecture: facilities forvirtual
+machines. IBMJournalofResearch andDevelopment ,
+27(6):530–544,Nov. 1983.
+[20] S. Hand. Self-paging intheNemesis operatingsystem. In
+Proceedings ofthe3rd Symposium onOperating Systems Design and
+Implementation (OSDI 1999) ,pages73–86,Oct. 1999.
+[21] S. Hand, T. L. Harris, E. Kotsovinos, andI. Pratt. Controllingthe
+XenoServer OpenPlatform, April 2003.
+[22] A. Jeffrey andI.Wakeman. A SurveyofSemantic Techniques for
+Active Networks, Nov. 1997. http://www.cogs.susx.
+ac.uk/projects/safetynet/ .
+[23] M. F. Kaashoek, D. R. Engler,G. R.Granger, H. M. Brice ˜no,
+R. Hunt,D. Mazi `eres, T. Pinckney, R. Grimm, J. Jannotti, and
+K. Mackenzie. Application performanceandﬂexibility onExokernelsystems. In Proceedings ofthe 16thACMSIGOPS Symposium on
+Operating Systems Principles , volume31(5)of ACMOperating
+Systems Review , pages 52–65,Oct. 1997.
+[24] R. Kessler andM. Hill. Page placement algorithms forlarge
+real-indexedcaches. ACMTransaction onComputer Systems ,
+10(4):338–359,Nov. 1992.
+[25] S.T.King,G.W.Dunlap,andP.M.Chen.OperatingSystemSupport
+forVirtual Machines. In Proceedings of the2003AnnualUSENIX
+TechnicalConference , Jun2003.
+[26] M. Kozuch andM. Satyanarayanan. Internet Suspend/Resume. In
+Proceedings ofthe4th IEEEWorkshoponMobileComputingSystems andApplications, Calicoon,NY , Jun2002.
+[27] I. M. Leslie, D. McAuley, R.Black, T. Roscoe, P. Barham, D. Evers,
+R. Fairbairns, andE. Hyden. Thedesign andimplementation ofan
+operatingsystem tosupportdistributed multimedia applications.IEEEJournal onSelected Areas InCommunications ,
+14(7):1280–1297,Sept. 1996.
+[28] J. MacKie-Mason andH. Varian. Pricingcongestible network
+resources. IEEE JournalonSelected Areas InCommunications ,
+13(7):1141–1149,Sept. 1995.
+[29] L. McVoyand C.Staelin. lmbench: Portable tools forperformance
+analysis. In Proceedings of theUSENIX AnnualTechnical
+Conference , pages 279–294,Berkeley, Jan. 1996.Usenix
+Association.
+[30] J. Navarro, S. Iyer,P. Druschel, andA. Cox.Practical, transparent
+operatingsystem support forsuperpages. In Proceedings of the5th
+SymposiumonOperatingSystemsDesignandImplementation(OSDI
+2002),ACMOperating Systems Review, Winter2002Special Issue,
+pages 89–104,Boston, MA, USA, Dec. 2002.
+[31] G. C.Necula. Proof-carryingcode. In Conference Record of
+POPL 1997: The24thACM SIGPLAN-SIGACT Symposium on
+Principles ofProgramming Languages , pages 106–119,Jan. 1997.
+[32] S. Oikawa andR. Rajkumar. Portable RK:A portableresource kernel
+forguaranteedandenforcedtiming behavior. In Proceedings of the
+IEEEReal Time TechnologyandApplications Symposium , pages
+111–120,June 1999.
+[33] L. Peterson, D. Culler, T. Anderson, andT. Roscoe. A blueprintfor
+introducingdisruptivetechnologyintotheinternet. In Proceedings of
+the1st WorkshoponHot Topicsin Networks (HotNets-I) , Princeton,
+NJ, USA, Oct. 2002.
+[34] I.Pratt andK. Fraser. Arsenic: A user-accessible gigabitethernet
+interface.In ProceedingsoftheTwentiethAnnualJointConferenceof
+theIEEE Computer andCommunications Societies (INFOCOM-01) ,
+pages 67–76,Los Alamitos, CA, USA, Apr. 22–262001.IEEEComputerSociety.
+[35] D. Reed, I.Pratt, P. Menage, S. Early, and N. Stratford. Xenoservers:
+accountedexecutionofuntrusted code.In Proceedings ofthe 7th
+WorkshoponHotTopics inOperating Systems , 1999.
+[36] J. S. RobinandC.E. Irvine. Analysis oftheIntel Pentium’s ability to
+supportasecure virtualmachine monitor.In Proceedings ofthe 9th
+USENIXSecurity Symposium, Denver, CO, USA , pages 129–144,
+Aug. 2000.
+[37] C.P. Sapuntzakis, R.Chandra,B. Pfaff, J. Chow, M. S. Lam, and
+M. Rosenblum.Optimizing the MigrationofVirtual Computers.In
+Proceedings of the5thSymposium onOperating Systems Design andImplementation (OSDI 2002) ,ACM OperatingSystems Review,
+Winter2002Special Issue, pages377–390,Boston,MA, USA, Dec.
+2002.
+[38] L. Seawright andR.MacKinnon. VM/370 –a studyofmultiplicity
+andusefulness. IBMSystems Journal , pages 4–17,1979.
+[39] P. ShenoyandH. Vin. Cello: A Disk SchedulingFramework for
+Next-generationOperating Systems. In Proceedings ofACM
+SIGMETRICS’98,theInternational Conference onMeasurement and
+ModelingofComputer Systems , pages 44–55,June1998.
+[40] V. Sundaram,A. Chandra,P. Goyal, P. Shenoy, J. Sahni, and
+H.M.Vin. Application Performance inthe QLinuxMultimediaOperating System. In Proceedings ofthe 8thACMConference on
+Multimedia , Nov. 2000.
+[41] D. Tennenhouse. LayeredMultiplexingConsidered Harmful. In
+Rudinand Williamson, editors, Protocols forHigh-Speed Networks ,
+pages 143–148.NorthHolland, 1989.
+[42] C.A. Waldspurger. Memoryresource managementin VMware ESX
+server. In Proceedings of the5thSymposium onOperating Systems
+Design andImplementation (OSDI2002) ,ACM OperatingSystems
+Review, Winter2002Special Issue, pages 181–194,Boston,MA,
+USA, Dec. 2002.
+[43] A. Whitaker, M. Shaw, and S. D. Gribble. Denali: Lightweight
+Virtual Machines forDistributed andNetworked Applications.Technical Report02-02-01,University ofWashington, 2002.
+[44] A. Whitaker, M. Shaw, and S. D. Gribble. Scale andperformancein
+theDenali isolation kernel. In Proceedings of the5thSymposium on
+OperatingSystems Design andImplementation (OSDI2002) ,A CM
+Operating Systems Review, Winter2002Special Issue, pages195–210,Boston, MA, USA, Dec. 2002.
+177 

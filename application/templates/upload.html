@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% block title %}Upload Document - APCE{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h3 class="mb-0"><i class="fas fa-upload me-2"></i>Upload Document</h3>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('upload_document') }}" enctype="multipart/form-data">
+                    <div class="mb-3">
+                        <label for="title" class="form-label">Document Title</label>
+                        <input type="text" class="form-control" id="title" name="title" placeholder="Enter a title for your document" required>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="document" class="form-label">Select PDF Document</label>
+                        <input type="file" class="form-control" id="document" name="document" accept=".pdf" required>
+                        <div class="form-text text-muted">Only PDF files are supported. Maximum file size: 10MB.</div>
+                    </div>
+                    
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle me-2"></i>
+                        <strong>What happens next:</strong>
+                        <ul class="mb-0 mt-2">
+                            <li>Your document will be uploaded and processed</li>
+                            <li>Text will be extracted and indexed for search</li>
+                            <li>You can then create chat sessions to ask questions about this document</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="d-grid gap-2">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-upload me-2"></i>Upload Document
+                        </button>
+                        <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary">
+                            <i class="fas fa-arrow-left me-2"></i>Back to Dashboard
+                        </a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

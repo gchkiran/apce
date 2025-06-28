@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - APCE{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-md-8">
+        <h1 class="mb-3">Welcome, {{ current_user.username }}!</h1>
+        <p class="lead">Manage your documents and chat sessions below.</p>
+    </div>
+    <div class="col-md-4 text-end d-flex align-items-center justify-content-end">
+        <a href="{{ url_for('upload_document') }}" class="btn btn-primary">
+            <i class="fas fa-upload me-2"></i>Upload New Document
+        </a>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Documents Section -->
+    <div class="col-md-6 mb-4">
+        <div class="card h-100">
+            <div class="card-header bg-primary text-white">
+                <h3 class="mb-0"><i class="fas fa-file-pdf me-2"></i>Your Documents</h3>
+            </div>
+            <div class="card-body">
+                {% if documents %}
+                    <div class="list-group">
+                        {% for document in documents %}
+                            <div class="list-group-item">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <h5 class="mb-1">{{ document.title }}</h5>
+                                        <p class="mb-1 text-muted">Uploaded: {{ document.uploaded_at.strftime('%Y-%m-%d %H:%M') }}</p>
+                                    </div>
+                                    <div class="btn-group">
+                                        <a href="{{ url_for('new_chat_session', document_id=document.id) }}" class="btn btn-sm btn-outline-primary">
+                                            <i class="fas fa-comments me-1"></i>New Chat
+                                        </a>
+                                        <form method="POST" action="{{ url_for('delete_document', document_id=document.id) }}" class="d-inline" onsubmit="return confirm('Are you sure you want to delete this document? All associated chats will also be deleted.');">
+                                            <button type="submit" class="btn btn-sm btn-outline-danger">
+                                                <i class="fas fa-trash-alt me-1"></i>Delete
+                                            </button>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="text-center py-5">
+                        <i class="fas fa-file-alt fa-4x mb-3 text-muted"></i>
+                        <p class="lead">You haven't uploaded any documents yet.</p>
+                        <a href="{{ url_for('upload_document') }}" class="btn btn-primary mt-2">
+                            <i class="fas fa-upload me-2"></i>Upload Your First Document
+                        </a>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Chat Sessions Section -->
+    <div class="col-md-6 mb-4">
+        <div class="card h-100">
+            <div class="card-header bg-info text-white">
+                <h3 class="mb-0"><i class="fas fa-comments me-2"></i>Your Chat Sessions</h3>
+            </div>
+            <div class="card-body">
+                {% if chat_sessions %}
+                    <div class="list-group">
+                        {% for session in chat_sessions %}
+                            <div class="list-group-item">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <h5 class="mb-1">{{ session.title }}</h5>
+                                        <p class="mb-1 text-muted">Created: {{ session.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
+                                    </div>
+                                    <div class="btn-group">
+                                        <a href="{{ url_for('chat', session_id=session.id) }}" class="btn btn-sm btn-outline-info">
+                                            <i class="fas fa-comments me-1"></i>Open
+                                        </a>
+                                        <form method="POST" action="{{ url_for('delete_chat_session', session_id=session.id) }}" class="d-inline" onsubmit="return confirm('Are you sure you want to delete this chat session?');">
+                                            <button type="submit" class="btn btn-sm btn-outline-danger">
+                                                <i class="fas fa-trash-alt me-1"></i>Delete
+                                            </button>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="text-center py-5">
+                        <i class="fas fa-comments fa-4x mb-3 text-muted"></i>
+                        <p class="lead">You haven't started any chat sessions yet.</p>
+                        {% if documents %}
+                            <p>Select a document and start a new chat to begin.</p>
+                        {% else %}
+                            <p>Upload a document first to start chatting.</p>
+                        {% endif %}
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

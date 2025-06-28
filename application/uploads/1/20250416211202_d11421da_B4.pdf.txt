@@ -1,0 +1,1798 @@
+This paper is included in the Proceedings of the 
+33rd USENIX Security Symposium.
+August 14–16, 2024 • Philadelphia, PA, USA
+978-1-939133-44-1
+Open access to the Proceedings of the 
+33rd USENIX Security Symposium  
+is sponsored by USENIX.Inf2Guard: An Information-Theoretic Framework 
+for Learning Privacy-Preserving Representations 
+against Inference Attacks
+Sayedeh Leila Noorbakhsh and Binghui Zhang, Illinois Institute of Technology; 
+Yuan Hong, University of Connecticut; Binghui Wang, Illinois Institute of Technology
+https://www.usenix.org/conference/usenixsecurity24/presentation/noorbakhsh
+Inf2Guard: An Information-Theoretic Framework for Learning Privacy-Preserving
+Representations against Inference Attacks
+Sayedeh Leila Noorbakhsh1,∗, Binghui Zhang1,∗, Yuan Hong2, Binghui Wang1
+1Illinois Institute of Technology,2University of Connecticut,∗Equal contribution
+Abstract
+Machine learning (ML) is vulnerable to inference (e.g., mem-
+bership inference, property inference, and data reconstruction)
+attacks that aim to infer the private information of training
+data or dataset. Existing defenses are only designed for one
+specific type of attack and sacrifice significant utility or are
+soon broken by adaptive attacks. We address these limitations
+by proposing an information-theoretic defense framework,
+called Inf2Guard , against the three major types of inference
+attacks. Our framework, inspired by the success of represen-
+tation learning, posits that learning shared representations not
+only saves time/costs but also benefits numerous downstream
+tasks. Generally, Inf2Guard involves two mutual informa-
+tion objectives, for privacy protection and utility preservation,
+respectively. Inf2Guard exhibits many merits: it facilitates
+the design of customized objectives against the specific infer-
+ence attack; it provides a general defense framework which
+can treat certain existing defenses as special cases; and im-
+portantly, it aids in deriving theoretical results, e.g., inherent
+utility-privacy tradeoff and guaranteed privacy leakage. Exten-
+sive evaluations validate the effectiveness of Inf2Guard for
+learning privacy-preserving representations against inference
+attacks and demonstrate the superiority over the baselines.1
+1 Introduction
+Machine learning (ML) models (particularly deep neural net-
+works) are vulnerable to inference attacks, which aim to infer
+sensitive information about the training data/dataset that are
+used to train the models. There are three well-known types of
+inference attacks on training data/dataset: membership infer-
+ence attacks (MIAs) [12, 58, 73], property inference attacks
+(PIAs) (also called distribution inference attacks) [6, 20, 63],
+and data reconstruction attacks (DRAs) (also called model
+inversion attacks) [7, 28]. Given an ML model, in MIAs, an
+adversary aims to infer whether a particular data sample was
+1Source code and the full version at: https://github.com/
+leilynourbakhsh/Inf2Guard .in the training set, while in PIAs, an adversary aims to infer
+statistical properties of the training dataset used to train the
+targeted ML model. Furthermore, an adversary aims to di-
+rectly reconstruct the training data in DRAs. Leaking the data
+sample or information about the dataset raises serious privacy
+issues. For instance, by performing MIAs, an adversary is
+able to identify users included in sensitive medical datasets,
+which itself is a privacy violation [30]. By performing PIAs,
+an adversary can determine whether or not machines that
+generated the bitcoin logs were patched for Meltdown and
+Spectre attacks [20]. More seriously, DRAs performed by an
+adversary leak all the information about the training data.
+To mitigate the privacy risks, various defenses have been
+proposed against MIAs [35, 45, 54, 56, 58, 59, 61, 71] and
+DRAs [21, 25, 38, 48, 55, 62, 69, 81]2. However, there are two
+fundamental limitations in existing defenses: 1) They are de-
+signed against only one specific type of attack; 2) Provable
+defenses (based on differential privacy [3, 18]) incur signifi-
+cant utility losses to achieve reasonable defense performance
+against inference attacks [33, 56] since the design of such
+randomization-based defenses did not consider specific infer-
+ence attacks (also see Section 5); and empirical defenses are
+soon broken by stronger/adaptive attacks [9, 16, 59].
+We aim to address these limitations and consider the ques-
+tion: 1) Can we design a unified privacy protection framework
+against these inference attacks, that also maintain utility? 2)
+Under the framework, can we further theoretically under-
+stand the utility-privacy tradeoff and the privacy leakage
+against the inference attacks? To this end, we propose an
+information-theoretic defense framework, termed Inf2Guard ,
+against inference attacks through the lens of representation
+learning [11]. Representation learning has been one of the
+biggest successes in modern ML/AI so far (e.g., it plays an
+important role in today’s large language models such as Chat-
+GPT [1] and PaLM2 [2]). Particularly, rather than training
+large models from scratch, which requires huge computational
+2To our best knowledge, there exist no effective defenses against PIAs.
+[26] analyzes sources of information leakage to cause PIAs, but their solutions
+are difficult to be tested on real-world datasets due to lack of generality.
+USENIX Association 33rd USENIX Security Symposium    2405
+costs and time (e.g., GPT-3 has 175 billion parameters), learn-
+ing shared representations (or pretrained encoder)3presents
+an economical alternative. For instance, the shared representa-
+tions can be directly used or further fine-tuned with different
+purposes, achieving considerable savings in time and cost.
+More specifically, we formulate Inf2Guard via two mutual
+information (MI)4objectives in general, for privacy protection
+and utility preservation, respectively. Under this framework,
+we can design customized MI objectives to defend against
+each inference attack. For instance, to defend against MIAs,
+we design one MI objective to learn representations that con-
+tain as less information as possible about the membership
+of the training data—thus protecting membership privacy,
+while the other one to ensure the learnt representations in-
+clude as much information as possible about the training data
+labels—thus maintaining utility. However, directly solving
+the MI objectives for each inference attack is challenging,
+since calculating an MI between arbitrary variables is often
+infeasible [49]. To address it, we are inspired by the MI neural
+estimation [4,10,15,29,47,50], which transfers the intractable
+MI calculations to the tractable variational MI bounds. Then,
+we are capable of parameterizing each bound with a (deep)
+neural network, and train neural networks to approximate
+the true MI and learn representations against the inference
+attacks. Finally, we can derive theoretical results based on our
+MI objectives: we obtain an inherent utility-privacy tradeoff,
+and guaranteed privacy leakage against each inference attack.
+We extensively evaluate Inf2Guard and compare it with
+the existing defenses against the inference attacks on mul-
+tiple benchmark datasets. Our experimental results validate
+thatInf2Guard obtains a promising utility-privacy tradeoff
+and significantly outperforms the existing defenses. For in-
+stance, under the same defense performance against MIAs,
+Inf2Guard has a 30% higher testing accuracy than the DP-
+SGD [3]. Our results also validate the privacy-utility tradeoffs
+obtained by Inf2Guard5.
+Our main contributions are summarized as below:
+•Algorithm: We design the first unified framework
+Inf2Guard to defend against the three well-known types
+of inference attacks via information theory. Our frame-
+work can instantiate many existing defenses as special
+cases, e.g., AdvReg [45] against MIAs (See Section 3.1)
+and Soteria [62] against DRAs (See Section 3.3).
+•Theory: Based on our formulation, we can derive novel
+theoretical results, e.g., the inherent tradeoff between util-
+ity and privacy, and guaranteed privacy leakage against
+all the considered inference attacks.
+3Pretrained encoder as a service has been widely deployed by industry,
+e.g., OpenAI’s GPT-4 API [1] and Clarifai’s Embedding API [17]. We will
+interchangeably use the pretrained encoder and learnt representations.
+4In information theory, MI is a measure of shared information between
+random variables, and offers a metric to quantify the “amount of information"
+obtained about one random variable by observing the other random variable.
+5A recent work [53] formulates defenses against inference attacks under a
+privacy game framework, but it does not propose concrete defense solutions.•Evaluation: Extensive evaluations verify the effective-
+ness of Inf2Guard for learning privacy-preserving rep-
+resentations against inference attacks.
+2 Background and Problem Definition
+Notations: We use s,s,S, andSto denote (random) scalar,
+vector, matrix, and space, respectively. Accordingly, Pr(s),
+Pr(s), and Pr(S)are the probability distribution over s,s, and
+S.I(x;r)andH(x,r)are the mutual information and cross
+entropy between a pair of random variables (x,r), respectively,
+andH(x) =I(x;x)as the entropy of x.KL(p||q)is the KL-
+divergence between two distributions pandq. We denote D
+as the underlying distribution that data are sampled from. A
+data sample is denoted as (x,y)∼D, where x∈Xis data
+features, y∈Yis the label, and XandYare the data space
+and label space, respectively. We further denote a dataset as
+D={X,y}={(xi,yi)}, that consists of a set of data samples
+(xi,yi)∼D, and will interchangeably use Dand{X,y}. We
+letu∈Ube the private attribute within the attribute space U.
+For instance, in MIAs, u∈U={0,1}means a binary-valued
+private membership; in PIAs, u∈U={1,2,···,K}indicates
+aK-valued private dataset property; and u∈U=Xindicates
+the private data itself in DRAs. The composition function of
+two functions fandgis denoted as (g◦f)(·) =g(f(·)).
+2.1 Formalizing Privacy Attacks
+We denote a classification model6Fθ:X→Yas a function,
+parameterized by θ, that maps a data sample x∈Xto a label
+y∈Y. Given a training set D∼D, we denote F←T(D)as
+learned by running a training algorithm Ton the dataset D.
+Formalizing MIAs: Assume a data sample (x,y)∼Dwith
+a private membership uthat is chosen uniformly at random
+from{0,1}, where u=1means (x,y)is a member of D, and
+0 otherwise. An MIA AMIAhas access to DandF, takes (x,y)
+as input, and outputs a binary AD,F
+MIA(x,y). We omit D,Ffor
+notation simplicity. Then, the attack performance of an MIA
+AMIAis defined as Pr (x,y,u)(AMIA(x,y) =u).
+Formalizing PIAs: PIAs define a private property on a
+dataset. Given a dataset Du∼Dwith a private property u
+chosen uniformly at random from {1,2,···,K}. A PIA APIA
+has access to DandF, and outputs a K-valued APIA(Du).
+Then, the attack performance of a PIA APIAis defined as
+Pr(Du,u)(APIA(Du) =u).
+Formalizing DRAs: Given a random data (x,y)∈D, DRAs
+aim to reconstruct the private x. A DRA ADRAhas access to D
+andF, and outputs a reconstructed ˆx=ADRA(x,y). The DRA
+performance is measured by the similarity/difference between
+ˆxandx. For instance, [7] introduces the (η,γ)-reconstruction
+metric defined as Pr(x,y)(∥ˆx−x∥2≤η)≥γ, where a smaller
+ηand a larger γimply a more severe DRA.
+6In this paper, we focus on classification models for simplicity.
+2406    33rd USENIX Security Symposium USENIX Association
+2.2 Threat Model and Problem Formulation
+We have three roles: task learner ,defender , and attacker . The
+task learner (i.e., data owner) aims to learn an accurate classi-
+fication model on its training data. The defender (e.g., data
+owner or a trusted service provider) aims to protect the train-
+ing data privacy—it designs a defense framework by learning
+shared data representations that are robust against inference
+attacks. The attacker can arbitrarily use data representations
+to perform the inference attack. The attacker is also assumed
+to know the underlying data distribution, but cannot access
+the internal encoder (e.g., deployed as an API [1, 17]).
+Formally, we denote fΘ:X→Zas the encoder , parameter-
+ized by Θ, that maps a data sample x∈X(or a dataset X∈X)
+to its representation vector r=f(x)∈Z(or representation
+matrix R=f(X)∈Z), where Zis the representation space.
+Moreover, we let C:Z→Ybe the classification model on
+top of the representation ror encoder f, which predicts the
+data label y(or dataset labels y). We further let A:Z→Ube
+theinference model , which infers the private attribute uusing
+the learnt representations rorR. Then, our defense goals are:
+•Defend against MIAs: Given a random sample (x,y,u)∈
+D, we expect to learn fsuch that the MIA performance
+Pr(AMIA(f(x),y) =u)is low, and the utility loss/risk, i.e.,
+Risk MIA(C◦f) =Pr(C◦f(x)̸=y), is also small.
+•Defend against PIAs: Given a random dataset (X,y,u)∈
+D, we expect to learn fwith low PIA performance
+Pr(APIA(f(X),y) =u), and also a small utility loss/risk,
+i.e., Risk PIA(C◦f) =1
+|y|∑(x,y)∈{X,y}Pr(C◦f(x)̸=y).
+•Defend against DRAs: Given a random sample (x,y)∈
+D, we expect to learn fwith low DRA performance, i.e.,
+Pr(x,y)(∥ˆx−x∥2≥η)≥γwith a large ηandγ(flipping the
+inequality direction on ηfor DRAs), and also a small utility
+risk Risk DRA(C◦f) =Pr(C◦f(x)̸=y).
+3 Design of Inf2Guard
+3.1Inf2Guard against MIAs
+3.1.1 MI objectives
+Given a data sample x∼D, from the training set D(i.e., u=1)
+or not (i.e., u=0), the defender learns the representation
+r=f(x)that satisfies the following two goals:
+•Goal 1: Membership protection. rcontains as less infor-
+mation as possible about the private membership u. Ideally,
+when rdoes not include information about u(i.e., r⊥u), it
+is impossible to infer ufrom r. Formally, we quantify the
+membership protection using the MI objective as follows:
+min
+fI(r;u), (1)
+where we minimize such MI to maximally reduce the cor-
+relation between randu.•Goal 2: Utility preservation. rshould be effective for pre-
+dicting the label yof the training data (i.e., u=1), thus
+preserving utility. Formally, we quantify the utility preser-
+vation using the below MI objective:
+max
+fI(y;r|u=1), (2)
+where we maximize such MI to make raccurately predict
+the training data label yduring training.
+3.1.2 Estimating MI via tractable bounds
+The key challenge of solving the above two MI objectives
+is that calculating an MI between two arbitrary random vari-
+ables is likely to be infeasible [49]. Inspired by the existing
+MI neural estimation methods [4,10,15,29,47,50], we convert
+the intractable exact MI calculations to the tractable varia-
+tional MI bounds. Specifically, we first obtain an MI upper
+bound for membership protection and an MI lower bound
+for utility preserving via introducing two auxiliary posterior
+distributions, respectively. Then, we parameterize each auxil-
+iary distribution with a neural network, and approximate the
+true MI by minimizing the upper bound and maximizing the
+lower bound through training the involved neural networks.
+We emphasize we do not design novel MI neural estimators,
+but adopt existing ones to assist our MI objectives for learning
+privacy-preserving representations. Note that, though the es-
+timated MI bounds may not be tight (due to the MI estimators
+or auxiliary distributions learnt by neural networks) [15, 29],
+they have shown promising performance in practice. It is still
+an active research topic to design better MI estimators that
+lead to tighter MI bounds (which is orthogonal to this work).
+Minimizing the upper bound MI in Equation (1). We adapt
+the variational upper bound proposed in [15]. Specifically,
+I(r;u)≤IvCLUB (r;u) =E
+p(r,u)[logqΨ(u|r)]−E
+p(r)p(u)[logqΨ(u|r)],
+where qΨ(u|r)is an auxiliary posterior distribution of p(u|r)
+needing to satisfy the below condition on KL divergence:
+KL(p(r,u)||qΨ(r,u))≤KL(p(r)p(u)||qΨ(r,u)). To achieve
+this, we thus minimize:
+min
+ΨKL(p(r,u)||qΨ(r,u)) = min
+ΨKL(p(u|r)||qΨ(u|r))
+=min
+ΨE
+p(r,u)[logp(u|r)]−E
+p(r,u)[logqΨ(u|r))]
+⇐⇒ max
+ΨE
+p(r,u)[logqΨ(u|r)], (3)
+where we note that Ep(r,u)[logp(u|r)]is irrelevant to Ψ. [15]
+proved when qΨ(u|r)is parameterized by a neural network
+with high expressiveness (e.g., deep neural network), the con-
+dition is satisfied almost surely by maximizing Equation (3).
+Finally, our Goal 1 for privacy protection is reformulated as
+solving the below min-max objective function:
+min
+fmin
+ΨIvCLUB (r;u)⇐⇒ min
+fmax
+ΨE
+p(r,u)[logqΨ(u|r)](4)
+USENIX Association 33rd USENIX Security Symposium    2407
+Remark. Equation (4) can be interpreted as an adversarial
+game between an adversary qΨ(i.e., a membership inference
+classifier) who aims to infer the membership ufrom r; and
+the encoder fwho aims to protect ufrom being inferred.
+Maximizing the lower bound MI in Equation (2). We adopt
+the MI estimator proposed in [46] to estimate the lower bound
+of Equation (2). Specifically, we have
+I(y;r|u=1) =H(y|u=1)−H(y|r,u=1)
+=H(y|u=1)+E
+p(y,r,u)[logp(y|r,u=1))]
+=H(y|u=1)+E
+p(y,r,u)[logqΩ(y|r,u=1))]
++E
+p(y,r,u)[KL(p(·|r,u=1)||qΩ(·|r,u=1))]
+≥H(y|u=1)+E
+p(y,r,u)[logqΩ(y|r,u=1))],
+where qΩis an arbitrary auxiliary posterior distribution that
+aims to accurately predict the training data label yfrom the
+representation r. Hence, our Goal 2 for utility preservation
+can be rewritten as the following max-max objective function:
+max
+fI(y;r|u=1)⇐⇒ max
+fmax
+ΩE
+p(y,r,u)[logqΩ[(y|r,u=1)](5)
+Remark. Equation (5) can be interpreted as a cooperative
+game between the encoder fandqΩ(e.g., a label predictor)
+that aims to preserve the utility collaboratively.
+Objective function of Inf2Guard against MIAs. By com-
+bining Equations (4) and (5), our objective function of learn-
+ing privacy-preserving representations against MIAs is:
+max
+f
+λmin
+Ψ−E
+p(x,u)[logqΨ(u|f(x))]
++(1−λ)max
+ΩE
+p(x,y,u)[logqΩ(y|f(x),u=1)]
+, (6)
+where λ∈[0,1]tradeoffs privacy and utility. That is, a larger
+λindicates a stronger membership privacy protection, while
+a smaller λindicates a better utility preservation.
+3.1.3 Implementation in practice
+In practice, we solve Equation (6) via training three parameter-
+ized neural networks (i.e., encoder f, membership protection
+network gΨassociated with the posterior distribution qΨ, and
+utility preservation network hΩassociated with the posterior
+distribution qΩ) using data samples from the underlying data
+distribution. Specifically, we first collect two datasets D1and
+D0from a (larger) dataset, and they include the members and
+non-members, respectively. Then, D1is used for training the
+utility network hΩ(i.e., predicting labels for training data D1)
+and the encoder f; and both D1andD0are used for training
+the membership protection network gΨ(i.e., inferring whether
+a data sample from D1/D0is a member or not) and the en-
+coder f. With it, we can approximate the expectation terms
+in Equation (6) and use them to train the neural networks.
+Sample(𝒙,𝑦)𝐑𝐞𝐩.𝐫𝐄𝐧𝐜𝐨𝐝𝐞𝐫𝐟𝚯
+𝐔𝐭𝐢𝐥𝐢𝐭𝐲𝐍𝐞𝐭𝐰𝐨𝐫𝐤𝐡𝛀𝐦𝐚𝐱𝐈(y;𝐫|𝐮=𝟏)
+𝐌𝐞𝐦.𝐏𝐫𝐨𝐭𝐞𝐜𝐭𝐢𝐨𝐧𝐍𝐞𝐭𝐰𝐨𝐫𝐤𝐠𝛙𝐦𝐢𝐧𝐈(𝐫;𝐮)𝐏𝐫𝐢𝐯𝐚𝐭𝐞𝐌𝐞𝐦.u
+Figure 1: Inf2Guard against MIAs.
+Training the membership protection network gΨ:We ap-
+proximate the first expectation w.r.t. qΨas7
+E
+p(x,u)logqΨ(u|f(x))≈ − ∑
+(xj,uj)∈D1∪D0H(uj,gΨ(f(xj))),
+where H(a,b)is the cross-entropy loss between aandb.
+Take a single data xwith private ufor example. The above
+equation is obtained by: −H(u,gΨ(f(x))) = loggΨ(f(x))u=
+logqΨ(u|f(x)), where gΨ(f(x))iindicates i-th entry proba-
+bility, and qΨ(u|f(x))means the probability of inferring x’s
+member u. The adversary maximizes this expectation aiming
+to enhance the membership inference performance.
+Training the utility preservation network hΩ:We approxi-
+mate the second expectation w.r.t. qΩas:
+E
+p(x,y,u)logqΩ(y|f(x),u=1)≈ −∑
+(xj,yj)∈D1H(yj,hΩ(f(xj))).
+We maximize this expectation to enhance the utility.
+Training the encoder f:With the updated gΨandhΩ, the
+defender performs gradient ascent on Equation (6) to update
+f, which can learn representations that protect membership
+privacy and further enhance the utility.
+We iteratively train the three networks until reaching pre-
+defined maximum rounds. Figure 1 illustrates our Inf2Guard
+against MIAs. Algorithm 1 in Appendix details the training.
+Connection with AdvReg [45]. We observe that AdvReg
+is a special case of Inf2Guard . Specifically, the objective
+function of AdvReg can be rewritten as:
+max
+f
+λmin
+Ψ∑
+(xj,uj)∈D1∪D0H(uj,gΨ(f(xj)))−(1−λ)∑
+(xj,yj)∈D1H(yj,f(xj))
+,
+where f:X→[0,1]|Y|now outputs a sample’s probabilistic
+confidence score and gΨis a membership inference model
+aiming to distinguish between members and non-members.
+3.2Inf2Guard against PIAs
+Different from MIAs, PIAs leak the training data properties
+at the dataset-level . To align this, instead of using a random
+sample (x,y), we consider a random dataset (X,y)in PIAs.
+Specifically, let X={xi}consist of a set of independent data
+samples and y={yi}the corresponding data labels that are
+sampled from the underlying data distribution D; and Xis
+associated with a private (dataset) property u.
+7We omit the sample size |D1|,|D0|for description brevity.
+2408    33rd USENIX Security Symposium USENIX Association
+3.2.1 MI objectives
+Given a dataset X∼Dwith a property u, the defender learns
+a dataset representation R=f(X)that satisfies two goals8:
+•Goal 1: Property protection. Rcontains as less informa-
+tion as possible about the private dataset property u. Ideally,
+when Rdoes not include information about u(i.e., R⊥u),
+it is impossible to infer ufrom R. Formally, we quantify
+the property protection using the below MI objective:
+min
+fI(R;u). (7)
+•Goal 2: Utility preservation. Rincludes as much informa-
+tion as possible about predicting y. Formally, we quantify
+the utility preservation using the MI objective as below:
+max
+fI(y;R). (8)
+3.2.2 Estimating MI via tractable bounds
+We estimate the bounds of Equations 7 and 8 as below.
+Minimizing the upper bound MI in Equation (7). Follow-
+ing membership protection, Goal 1 is reformulated as solving
+the below min-max objective function:
+min
+fI(R;u)⇐⇒ min
+fmax
+ΨE
+p(R,u)[logqΨ(u|R)], (9)
+where qΨ(u|R)is an arbitrary posterior distribution.
+Remark. Similarly, Equation (9) can be interpreted as an ad-
+versarial game between a property inference adversary qΨ
+who aims to infer ufrom the dataset representations Rand
+the encoder fwho aims to protect ufrom being inferred.
+Maximizing the lower bound MI in Equations (8). Simi-
+larly, we adopt the MI estimator [46] to estimate the lower
+bound MI in our Goal 2 , which can be rewritten as the fol-
+lowing max-max objective function:
+max
+fI(y;R)⇐⇒ max
+fmax
+ΩE
+p(y,R)[logqΩ(y|R)], (10)
+where qΩis an arbitrary posterior distribution that aims to
+predict each label y∈yfrom the data representation r∈R.
+Remark. Equation (10) can be interpreted as a cooperative
+game between fandqΩto preserve the utility collaboratively.
+Objective function of Inf2Guard against PIAs. By com-
+bining Equations (9) and (10), our objective function of learn-
+ing privacy-preserving representations against PIAs is:
+max
+f
+λmin
+Ψ−E
+p(X,u)[logqΨ(u|f(X))]+( 1−λ)max
+ΩE
+p(X,y)[logqΩ(y|f(X))]
+,
+(11)
+where λ∈[0,1]tradeoffs between privacy and utility. That is,
+a larger/smaller λindicates less/more dataset property can be
+inferred through the learnt dataset representation.
+8For notation simplicity, we use the same fto indicate the encoder. Simi-
+lar for subsequent notations such as gΨ,hΨ,qΩ,hΩ, etc.
+D𝐚𝐭𝐚𝐬𝐞𝐭(𝐗,𝐲)𝐑𝐞𝐩.𝐑𝐄𝐧𝐜𝐨𝐝𝐞𝐫𝐟𝚯
+𝐔𝐭𝐢𝐥𝐢𝐭𝐲𝐍𝐞𝐭𝐰𝐨𝐫𝐤𝐡𝛀𝐦𝐚𝐱𝐈(𝐲;𝐑)
+𝐏𝐫𝐨𝐩.𝐏𝐫𝐨𝐭𝐞𝐜𝐭𝐢𝐨𝐧𝐍𝐞𝐭𝐰𝐨𝐫𝐤𝐠𝛙𝐦𝐢𝐧𝐈(𝐑;𝐮)𝐏𝐫𝐢𝐯𝐚𝐭𝐞𝐏𝐫𝐨𝐩.u
+Figure 2: Inf2Guard against PIAs.
+3.2.3 Implementation in practice
+Equation (11) is solved via three parameterized neural net-
+works (i.e., the encoder fΘ, the property protection network
+gΨassociated with qΨ, and the utility preservation network
+hΩassociated with qΩ) using a set of datasets sampled from
+a data distribution. Specifically, we first collect a large refer-
+ence dataset Dr. Then, we randomly generate a set of small
+datasets {Dj= (Xj,yj)}jfrom Dr. We denote the dataset
+property value for each Djasuj. With it, we can approximate
+the expectation terms in Equation (11).
+Training the property inference network gΨ:We approxi-
+mate the first expectation w.r.t. qΨas
+E
+p(X,u)logqΨ(u|f(X))≈ −∑
+{Xj∈Dj}H(uj,gΨ(f(Xj))), (12)
+where f(Xj)is the aggregated representation of a dataset Xj,
+i.e., f(Xj) =Agg({f(x)}x∈Xj). We will discuss the aggre-
+gator Agg(·)in Section 5.2.2. The adversary maximizes this
+expectation to enhance the property inference performance.
+Training the utility preservation network hΩ:Similarly, we
+approximate the second expectation w.r.t. qΩas:
+E
+p(X,y)logqΩ(y|f(X))≈ −∑
+{Dj}∑
+(xi,yi)∈DjH(yi,hΩ(f(xi))),(13)
+where we maximize this expectation to enhance the utility.
+Training the encoder f:The defender then performs gradient
+ascent on Equation (11) to update f, which mitigates the PIA
+and further enhances the utility.
+We iteratively train the three networks until reaching maxi-
+mum rounds. Figure 2 illustrates our Inf2Guard against PIAs.
+Algorithm 2 in Appendix details the training process.
+3.3Inf2Guard against DRAs
+Different from MIAs and PIAs, DRAs aim to directly recover
+the training data from the learnt representations. A recent
+defense [62] shows perturbing the latent representations can
+somewhat protect the data from being reconstructed. How-
+ever, this defense is broken by an advanced attack [9]. One
+key reason is the defense perturbs representations in a deter-
+ministic fashion for already trained models. We address the
+issues and propose an information-theoretic defense to learn
+USENIX Association 33rd USENIX Security Symposium    2409
+randomized representations against the DRAs in an end-to-
+endlearning fashion. Our core idea is to learn a deterministic
+encoder and a randomized perturbator that ensures learning
+the perturbed representation in a controllable manner.
+3.3.1 MI objectives
+Given a data sample x∼Dwith a label y, the defender learns
+a representation r=f(x)such that when ris perturbed by
+certain perturbation (denoted as δδδ), the shared perturbed rep-
+resentation r+δδδcannot be used to well recover x, but is
+effective for predicting y, from the information-theoretic per-
+spective. Then we aim to achieve the following two goals:
+•Goal 1: Data reconstruction protection. r+δδδcontains
+as less information as possible about x. Moreover, the per-
+turbation δδδshould be effective enough. Hence, we require
+δδδcan cover all directions of x, and force the entropy of δδδ
+to be as large as possible. Formally, we quantify the data
+reconstruction protection using the below MI objective:
+min
+f,p(δδδ)∼PI(r+δδδ;x)−H(δδδ), (14)
+•Goal 2: Utility preservation. To ensure rbe useful, it
+should be effective for predicting the label y. Further, as we
+will share the perturbed representation r+δδδ, it should be
+also effective for predicting y. Formally, we quantify the
+utility preservation using the MI objective as follows:
+max
+f,p(δδδ)∼PI(r+δδδ;y)+I(r;y), (15)
+3.3.2 Estimating MI via tractable bounds
+Minimizing the upper bound MI in Equation (14). Simi-
+larly, we adapt the variational upper bound in [15]. Our Goal
+1for data reconstruction protection can be reformulated as
+the below min-max objective function:
+min
+f,p(δδδ)∼PI(r+δδδ;x)−αH(δδδ) (16)
+⇐⇒ min
+f,p(δδδ)∼P 
+max
+ΨE
+p(r,δδδ,x)[logqΨ(x|r+δδδ)]−αH(δδδ)
+.
+Remark. Equation (16) can be interpreted as an adversarial
+game between an adversary qΨ(i.e., data reconstructor) who
+aims to infer xfrom r+δδδ; and the encoder fwho aims to
+protect xfrom being inferred via carefully perturbing r.
+Maximizing the lower bound MI in Equation (15). Based
+on [50], we can produce a lower bound on the MI I(r;y)due
+to the non-negativity of the KL-divergence:
+I(r;y) =E
+p(y,r)[logqΩ(y|r)/p(y)]+E
+p(r)[KL(p(y|r)||qΩ(y||r))]
+≥E
+p(y,r)[logqΩ(y|r)]+H(y), (17)
+where qΩis an arbitrary posterior distribution that predicts
+the label yfrom rand the entropy H(y)is a constant.
+We have a similar form for the MI I(r+δδδ;y)as belowI(r+δδδ;y)≥max
+p(δδδ)∼PE
+p(y,r,δδδ)[logqΩ(y|r+δδδ)]+H(y), (18)
+where we use the same qΩto predict the label yfrom the
+perturbed representation r+δδδ.
+Then, our Goal 2 for utility preservation can be rewritten
+as the following max-max objective function:
+max
+f,p(δδδ)∼PI(r+δδδ;y)+I(r;y) (19)
+⇐⇒ max
+f,Ω 
+max
+p(δδδ)∼PE
+p(y,r,δδδ)[logqΩ(y|r+δδδ)]+E
+p(y,r)[logqΩ(y|r)]
+.
+Remark. Equation (19) can be interpreted as a cooperative
+game between the encoder fand the label prediction network
+qΩ, who aim to preserve the utility collaboratively.
+Objective function of Inf2Guard against DRAs. By com-
+bining Equations (16)-(19), our objective function of learning
+privacy-preserving representations against DRAs is:
+max
+f,p(δδδ)∼P
+λ 
+min
+Ψ−E
+p(x,δδδ)[logqΨ(x|f(x)+δδδ)]+αH(δδδ)
+(20)
++(1−λ) 
+max
+ΩE
+p(x,δδδ,y)[logqΩ(y|f(x)+δδδ)]+E
+p(x,y)[logqΩ(y|f(x))]
+,
+where λ∈[0,1]tradeoffs privacy and utility. A larger λim-
+plies less data features can be inferred through the perturbed
+representation, while a smaller λimplies the shared perturbed
+representation is easier for predicting the label.
+3.3.3 Parameterizing perturbation distributions
+The key of our defense lies in defining the perturbation distri-
+bution p(δδδ)in Equation (20). Directly specifying the optimal
+perturbation distribution is challenging. Motivated by varia-
+tional inference [36], we propose to parameterize p(δδδ)with
+trainable parameters, e.g., Φ. Then the optimization prob-
+lem w.r.t. the perturbation δδδcan be converted to be w.r.t. the
+parameters Φ, which can be solved via back-propagation.
+A natural way to model the perturbation around a represen-
+tation is using a distribution with an explicit density function.
+Here we adopt the method in [36] by transforming δδδsuch
+that the reparameterization trick can be used in training. For
+instance, when considering pΦ(δδδ)as a Gaussian distribution
+N(µµµ,σσσ2), we can reparameterize δδδ(with a scale ε) as:
+δδδ=ε·tanh(u),u∼N(µµµ,diag(σσσ2)), (21)
+That is, it first samples ufrom a diagonal Gaussian with a
+mean vector µµµand standard deviation vector σσσ, andδδδis ob-
+tained by compressing uto be[−1,1]via the tanh(·)function
+and multiplying ε.Φ= (µµµ,σσσ)are the parameters to be learnt.
+3.3.4 Implementation in practice
+We train three neural networks (i.e., the encoder f, reconstruc-
+tion protection network gΨ, and utility preservation network
+hΩ) using data samples from certain data distribution. Sup-
+pose we are given a set of data samples D={xj,yj}.
+2410    33rd USENIX Security Symposium USENIX Association
+Sample(𝒙,𝑦)𝐑𝐞𝐩.𝐫𝐄𝐧𝐜𝐨𝐝𝐞𝐫𝐟𝚯
+𝐔𝐭𝐢𝐥𝐢𝐭𝐲𝐍𝐞𝐭𝐰𝐨𝐫𝐤𝐡𝛀𝐦𝐚𝐱𝐈y;𝐫+𝛅+𝐈(y;𝐫)
+𝐑𝐞𝐜.𝐏𝐫𝐨𝐭𝐞𝐜𝐭𝐢𝐨𝐧𝐍𝐞𝐭𝐰𝐨𝐫𝐤𝐠𝛙𝐦𝐢𝐧𝐈𝐫+𝛅;𝐱−𝐇(𝛅)
+𝐩𝐞𝐫𝐭.𝛅Figure 3: Inf2Guard against DRAs.
+Learning the data reconstruction network gΨ:Asxand its
+representation rare often high-dimensional, the previous MI
+estimators are inappropriate in this setting. To address it, we
+use the Jensen-Shannon divergence (JSD) [29] specially for
+high-dimensional MI estimation. Assume we have updated
+Φ. We can approximate the expectation w.r.t. gΨas
+E
+p(x),pΦ(δδδ)logqΨ(x|f(x)+δδδ) =I(JSD)
+Θ,Ψ(x;fΘ(x)+δδδ)
+≈∑
+xj∈D,δδδj∼pΦ(δδδ)[−sp(−hΨ(xj,fΘ(xj)+δδδj))]
+− ∑
+(xj,x′
+j)∈D,δδδj∼pΦ(δδδ)[sp(hΨ(x′
+j,fΘ(xj)+δδδj)], (22)
+where x′
+jis an independent and random sample from the same
+distribution as xj, and sp(z) =log(1+exp(z))is the softplus
+function. We maximize I(JSD)
+Θ,Ψto update gΨ.
+Learning the utility preservation network hΩ:We first
+estimate the below expectation:
+E
+p(x,y)pΦ(δδδ)logqΩ(y|f(x)+δδδ)≈ − ∑
+(xj,yj)∈D,δδδj∼pΦ(δδδ)H(yj,hΩ(f(xj)+δδδj)).
+(23)
+Similarly, we can approximate the third expectation as:
+E
+p(x,y)logqΩ(y|f(x))≈ −∑
+(xj,yj)∈DH(yj,hΩ(f(xj))). (24)
+We minimize the two cross entropy losses to update hΩ.
+Updating the distribution parameter Φ:Due to the repa-
+rameterization trick, the gradient can be back-propagated
+from each δδδjto the parameters Φ. For simplicity, we do not
+consider the JSD term in Equation (22) due to its complexity.
+Then we have the terms relevant to Φas below:
+E
+zzz∼N(0,1)∑
+(xj,yj)H(yj,hΩ(f(xj)+ε·tanh(µµµ+σσσzzz)))−β·H(ε·tanh(µµµ+σσσzzz)),
+(25)
+where β=λα/(1−λ). The first term is the cross entropy loss,
+while the second term is the entropy. The gradient w.r.t. Φin
+each term can be calculated. In practice, we approximate the
+expectation on zzzwith (e.g., 5) Monte Carlo samples, and per-
+form the stochastic gradient descent to update Φ. Details on
+updating Φare in Algorithm 3. With Φ, we use it to generate
+δδδand add it to rto produce the perturbed representation.
+Learning the encoder f.Finally, after updating gΨ,hΩ, and
+Φ, we can perform gradient ascent to update f.
+We iteratively train the networks until reaching a prede-
+fined maximum round. Figure 3 illustrates Inf2Guard against
+DRAs. Algorithm 4 in Appendix details the training process.4 Theoretical Results
+Due to limited space, we mainly show the guaranteed pri-
+vacy leakage under Inf2Guard . We also derive an inherent
+utility-privacy tradeoff of Inf2Guard , which requires a binary
+classification task, and binary-valued dataset property in PIAs.
+Details and proofs are deferred to the full version.
+Guaranteed privacy leakage of MIAs: LetAMIAbe the set
+of all MIAs AMIA={AMIA:Z→u∈ {0,1}}that have access
+to the representations rby querying fwith data xfrom the
+distribution D. The MIA accuracy is bounded as below:
+Theorem 1. Letfbe the learnt encoder by Equation (6) over
+a data distribution D⊂X. For a random data sample x∼D
+with the learnt representation r=f(x)and membership u, we
+have Pr (AMIA(r) =u)≤1−H(u|r)
+2log2(6/H(u|r)),∀AMIA∈AMIA.
+Remark. Theorem 1 shows if H(u|r)is larger, the bounded
+MIA accuracy is smaller. Note H(u|r) =H(u)−I(u;r)and
+H(u)is a constant. Achieving a large H(u|r)implies obtain-
+ing a small I(u;r), which is our Goal 1 in Equation (1) does.
+In practice, once the encoder fis learnt on a dataset from D,
+I(u;r)can be estimated, then the bounded MIA accuracy can
+be calculated. A better encoder for/and better MI estimator
+ofI(u;r)can yield a smaller MIA performance.
+Guaranteed privacy leakage of PIAs: LetAPIAbe the set of
+all PIAs that have access to the representations Rof a dataset
+X={xi}sampled from the data distribution D, i.e.,APIA=
+{APIA:Z→u={0,1}}. The PIA accuracy is bounded as:
+Theorem 2. Letfbe the learnt encoder by Equation (11)
+over a data distribution D. For a random dataset X∼Dwith
+the learnt representation R=f(X)and dataset property u,
+we have Pr(APIA(R) =u)≤1−H(u|R)
+2log2(6/H(u|R)),∀APIA∈APIA.
+Remark. Theorem 2 shows when H(u|R)is larger, the PIA
+accuracy is smaller, i.e., less dataset property is leaked. Also,
+a large H(u|R)indicates a small I(u;R)—This is exactly our
+Goal 1 in Equation (7) aims to achieve.
+Guaranteed privacy leakage of DRAs: LetADRAbe the set
+of all DRAs that have access to the perturbed data represen-
+tations, i.e., ADRA={ADRA:r+δδδ∈Z×P→x∈X}. An
+ℓp-norm ball centered at a point vwith a radius ρis denoted
+asBp(v,ρ), i.e.,Bp(v,ρ) ={v′:∥v′−v∥p≤ρ}. For a space
+S, we denote its boundary as ∂S, whose volume is denoted as
+V ol(∂S). Then the reconstruction error (in terms of ℓpnorm
+difference) incurred by any DRA is bounded as below:
+Theorem 3. Letfbe the encoder learnt by Equation (20)
+over a data distribution D⊂Xandδδδbe the perturba-
+tion for a random sample x∼X. Then, Pr(∥ADRA(r+δδδ)−
+x∥p≥η)≥1−I(x;r+δδδ)+log2
+logVol(∂X)−logVol(∂X(η)),∀ADRA∈ADRA, where
+Vol(∂X(η)) = max x∈XVol(∂Bp(x,η)∩X).
+Remark. Theorem 3 shows a lower bound error achieved by
+the strongest DRA. Given an η, when I(x;r+δδδ)is smaller,
+the lower bound data reconstruction error is larger, meaning
+the privacy of the data itself is better protected. Moreover,
+minimizing I(x;r+δδδ)is exactly our Goal 1 in Equation (14).
+USENIX Association 33rd USENIX Security Symposium    2411
+(a) CIFAR10
+ (b) Purchase100
+ (c) Texas100
+Figure 4: TPR vs FPR of Inf2Guard against LiRA on different λ’s.
+5 Evaluations
+In this section, we will evaluate Inf2Guard against the MIAs,
+PIAs, and DRAs on benchmark datasets. Inf2Guard involves
+training the encoder, the privacy protection network, and the
+utility preservation network. The detailed dataset description
+and architectures of the networks are given in the full version.
+5.1 Defense Results on MIAs
+5.1.1 Experimental setup
+Datasets: Following existing works [35, 45], we use the CI-
+FAR10 [37], Purchase100 [45], and Texas100 [58] datasets,
+to evaluate Inf2Guard against MIAs.
+Defense/attack training and testing: The training sets and
+test sets are listed in Table 9 in Appendix A. For instance, in
+CIFAR10, we use 50K samples in total and split it into two
+halves, where 25K samples are used as the utility training
+set("members") and the other 25K samples as the utility test
+set("non-members"). We select 80% of the members and
+non-members as the attack training set and the remaining
+members and non-members as the attack test set .
+•Defense training: We use the utility training set and attack
+training set to train the encoder, utility preservation network,
+and membership protection network simultaneously. Then,
+the learnt encoder is frozen and published as an API.
+•Attack training: To mimic the strongest possible MIA,
+we let the attacker know the exact membership protection
+network and attack training set used in defense training.
+Specifically, s/he feeds the attack training set to the learnt
+encoder to get the data representations and trains the MIA
+classifier (same as the membership protection network) on
+these representations to maximally infer the membership.
+•Defense and attack testing: We use the utility test set
+to obtain the utility (i.e., test accuracy) via querying the
+trained encoder and utility network. Moreover, we use the
+attack test set to obtain the MIA performance.
+Privacy metric: We measure the MIA performance via both
+the MIA accuracy and the true positive rate (TPR) vs. false
+positive rate (FPR), suggested by the SOTA LiRA MIA [12].Table 1: Inf2Guard results against MIAs on the three dataset.
+λ=0means no privacy protection, while λ=1means no
+utility preservation. Random guessing MIA accuracy is 50%.
+CIFAR10
+λUtility MIA Acc
+0 78.9% 70.1%
+0.25 78.2% 55.9%
+0.5 78% 53.5%
+0.75 77.2% 51.1%
+1 20% 50%Purchase100
+λUtility MIA Acc
+0 81.7% 68.4%
+0.25 80.9% 60%
+0.5 80% 51%
+0.75 78% 50%
+1 20% 50%Texas100
+λUtility MIA Acc
+0 49.9% 70.2%
+0.25 49.1% 61%
+0.5 47% 53%
+0.75 46% 50%
+1 2% 50%
+Specifically, the MIA accuracy is obtained by querying the
+trained encoder and trained MIA classifier with the attack test
+set. Moreover, we treat the representations and membership
+network learnt by Inf2Guard as the input data and target
+model for LiRA. We then train 16 white-box shadow models
+(i.e., assume LiRA uses the exact membership network in
+Inf2Guard ) on the data representations of the utility training
+set, and report the TPR vs. FPR on the attack test set.
+5.1.2 Experimental results
+Utility-privacy results: According to Equation (6), λ=0
+indicates no privacy protection. Increasing λ’s value enhances
+Inf2Guard ’s resilience against MIAs. λ=1 means the max-
+imum privacy protection without preserving utility. Table 1
+shows the utility-MIA Accuracy results of Inf2Guard . We
+have the following observations: 1) The MIA accuracy is the
+largest when λ=0, implying leaking the most membership
+privacy by MIAs. 2) When only protecting privacy ( λ=1),
+the MIA accuracy reaches to the optimal random guessing,
+but the utility is the lowest. 3) When 0<λ<1,Inf2Guard
+obtains reasonable utility and MIA accuracy. Especially, when
+λ=0.75, the utility loss is marginal (i.e., <4%), while the
+MIA accuracy is (close to) random guessing. The results
+show the learnt privacy-preserving encoder/representations
+are effective against MIAs, and maintain utility as well.
+Further, Figure 4 shows the TPR vs FPR of Inf2Guard
+against LiRA. Similarly, we observe that the TPR at low
+FPRs is relatively large (strong membership inference) in
+case of no privacy protection, but it can be largely reduced by
+increasing λ. This implies that Inf2Guard indeed learns the
+representations that can defend against LiRA to some extent.
+2412    33rd USENIX Security Symposium USENIX Association
+(a) Utility w/o. defense (78.9%)
+ (b) MIA Acc w/o. defense (70.1%)
+ (c) Utility w. defense (77.2%)
+ (d) MIA Acc w. defense (51.1%)
+Figure 5: Inf2Guard against MIAs: 3D t-SNE embeddings results on the learnt representation of on CIFAR10.
+(a) Utility w/o. defense (81.7%)
+ (b) MIA Acc w/o. defense (68.4%)
+ (c) Utility w. defense (80%)
+ (d) MIA Acc w. defense (51%)
+Figure 6: Inf2Guard against MIAs: 3D t-SNE embeddings results on the learnt representation on Purchase100.
+(a) Utility w/o. defense (49.8%)
+ (b) MIA Acc w/o. defense (70.2%)
+ (c) Utility w. defense (46%)
+ (d) MIA Acc w. defense (50%)
+Figure 7: Inf2Guard against MIAs: 3D t-SNE embeddings results on the learnt representation on Texas100.
+Visualizing the learnt representations: To better understand
+the learnt representations by Inf2Guard , we adopt the t-SNE
+algorithm [64] to visualize the low-dimensional embeddings
+of them. λis chosen in Table 1 that achieves the best utility-
+privacy tradeoff. We also compare with the case without pri-
+vacy protection. Figures 5-7 show the 3D t-SNE embeddings,
+where each color corresponds to a label in the learning task
+or (non)member in the privacy task, and each point is a data
+sample. We can observe the t-SNE embeddings of the learnt
+representations without privacy protection for members and
+non-members are separated to some extent, meaning the mem-
+bership can be inferred via the learnt MIA classifier. On the
+contrary, the t-SNE embeddings of the learnt representations
+by our Inf2Guard for members and non-members are mixed—
+hence making it difficult for the (best) MIA classifier to infer
+the membership from these learnt representations.
+Comparing with the existing defenses against MIAs: All
+empirical defenses are broken by stronger attacks [16, 59],
+except adversarial training-based AdvReg [45] (a special caseTable 2: Comparing Inf2Guard with existing defenses against
+MIAs on the three datasets. DP methods are under the
+same/close defense performance as Inf2Guard .
+DefenseCIFAR10 Purchase100 Texas100
+Utility MIA Acc Utility MIA Acc Utility MIA Acc
+DP-SGD 48% 51% 40% 52% 11% 51%
+DP-enc 45% 51% 32% 51% 10% 50%
+AdvReg 75% 53% 75% 51% 44% 52%
+NeuGuard 74% 56% 77% 53% 43% 52%
+Inf2Guard 77% 51% 80% 51% 46% 50%
+ofInf2Guard ). NeuGuard [71] is a recent empirical defense
+and shows better performance than, e.g., [35, 57]. Differen-
+tial privacy is the only defense with privacy guarantees. We
+propose to use two DP variants, i.e., DP-SGD [3] and DP-
+encoder (details in Appendix A). The comparison results of
+these defenses are shown in Table 2 (more DP results in Ta-
+ble 12 in Appendix B) and Figure 8. From Table 2, we observe
+DP methods have bad utility when ensuring the same level
+defense performance (w.r.t. MIA accuracy) as Inf2Guard .
+AdvReg and NeuGuard also perform worse than Inf2Guard .
+USENIX Association 33rd USENIX Security Symposium    2413
+(a) CIFAR10
+ (b) Purchase100
+ (c) Texas100
+Figure 8: Comparing Inf2Guard (λ=0.75) with the existing defenses against LiRA.
+Figure 8 shows the TPR vs. FPR of these defenses against
+LiRA under the results in Table 2. For DP methods, we also
+plot the TPR vs FPR when their utility is close to Inf2Guard .
+With an MIA accuracy close to random guessing (but low
+utility), we see DP methods have the smallest TPR at a given
+low FPR. This means DP methods can most reduce the attack
+effectiveness of LiRA, which is also verified in [12]. However,
+if DP methods have a close utility as Inf2Guard , their TPRs
+are much higher than Inf2Guard ’s at a low FPR. Besides,
+Inf2Guard has smaller TPRs than AdvReg and NeuGuard.
+Overhead comparison: All MIA defenses train a task classi-
+fier. AdvReg trains a task classifier and membership inference
+network. NeuGuard trains a task classifier with two regular-
+izations. DP-SGD trains the task classifier on noisy models,
+while DP-encoder normally trains the encoder first and then
+trains the utility network on (Gaussian) noisy representations.
+In the experiments, we define the task classifier of the com-
+pared defenses as the concatenation of our encoder and util-
+ity network. In our platform (NVIDIA GeForce RTX 3070
+Ti), it took Inf2Guard (72,7,6), AdvReg (66,6,6), NeuGuard
+(62,5,5), DP-SGD (60,4,3) and DP-encoder (59,4,3) seconds
+to run each iteration on the three datasets, respectively9.
+5.2 Defense Results on PIAs
+5.2.1 Experimental setup
+Datasets: Following recent works [13, 63], we use three
+datasets (Census [63], RSNA [63], and CelebA [40]) and
+treat the female ratio as the private dataset property.
+Defense/attack training and testing: We first predefine a
+(different) female ratio set in each dataset. For each female ra-
+tio, we generate a number of subsets from the training set and
+test set with different subset sizes. The generated training/test
+subsets and all data samples in these subsets are treated as the
+attack training/test set and the utility training/test set, respec-
+tively. More details are in Table 10 in Appendix A.
+•Defense training: We use the utility training set and attack
+training set to train the encoder, utility preservation network,
+and property protection network simultaneously. Then, the
+learnt encoder is frozen and published as an API.
+9We have similar conclusions on defending against the other two attacks.Table 3: Inf2Guard results against PIAs with a mean -
+aggregation. λ=0means no privacy protection, while λ=1
+means no utility preservation. Random guessing PIA accuracy
+on the three datasets are 25%, 14.3%, and 9.1%, respectively.
+Census
+λUtility PIA Acc
+0 85% 68%
+0.25 80% 61%
+0.5 78% 52%
+0.75 76% 34%
+1 45% 26%RSNA
+λUtility PIA Acc
+0 83% 52%
+0.25 82% 25%
+0.5 82% 24%
+0.75 80% 19%
+1 50% 15%CelebA
+λUtility PIA Acc
+0 91% 50%
+0.25 91% 28%
+0.5 91% 17%
+0.75 89% 11%
+1 53% 10%
+•Attack training: We mimic the strongest possible PIA,
+where the attacker knows the exact property protection net-
+work, the aggregator, and attack training set used in defense
+training. Specifically, s/he feeds each subset in the attack
+training set to the learn encoder to get the subset represen-
+tation, applies the aggregator to obtained the aggregated
+representation, and trains the PIA classifier (same as the
+property protection network) on these aggregated represen-
+tations to maximally infer the private female ratio.
+•Defense/attack testing: We utilize the utility test set to
+obtain the utility via querying the trained encoder and utility
+network, and the attack test set to obtain the PIA accuracy
+via querying the trained encoder and trained PIA classifier.
+5.2.2 Experimental results
+Utility-privacy results: Table 3 shows the utility-privacy
+results of Inf2Guard , where the encoder uses a mean-
+aggregator (i.e., average the representations of a subset of
+data. Note different subsets have different sizes). We have
+similar observations as in defending against MIAs: 1) The
+PIA accuracy can be as large as 68% without privacy protec-
+tion (λ=0in Equation (11)), implying the PIA is effective;
+2) When focusing on protecting privacy ( λ=1), the PIA per-
+formance can be largely reduced. However, the utility is also
+significantly decreased, e.g., from 85% to 45%. 3) Utility and
+privacy show a tradeoff w.r.t. 0<λ<1. In most of the cases,
+the best tradeoff is obtained when λ=0.75. Again, the results
+show the learnt privacy-preserving encoder/representations
+are effective against PIAs, and also maintain utility.
+2414    33rd USENIX Security Symposium USENIX Association
+Table 4: Inf2Guard results against PIAs with a max-
+aggregation. Random guessing PIA accuracy on the three
+datasets are 25%, 14.3%, and 9.1%, respectively.
+Census
+λUtility PIA Acc
+0 85% 65%
+0.25 83% 51%
+0.5 79% 49%
+0.75 77% 37%
+1 47% 30%RSNA
+λUtility PIA Acc
+0 83% 52%
+0.25 82% 24%
+0.5 82% 24%
+0.75 81% 21%
+1 50% 16%CelebA
+λUtility PIA Acc
+0 91% 50%
+0.25 91% 25%
+0.5 91% 15%
+0.75 88% 15%
+1 53% 9%
+Table 5: Comparing Inf2Guard with DP against PIAs.
+DefenseCensus RSNA CelebA
+Utility PIA Acc Utility PIA Acc Utility PIA Acc
+DP-encoder 52% 34% 57% 19% 66% 11%
+Inf2Guard 76% 34% 80% 19% 89% 11%
+Visualizing the learnt representations: Figures 12-14 in
+Appendix B show the 3D t-SNE embeddings of the learnt rep-
+resentations with λ=0,0.75. Similarly, we observe the t-SNE
+embeddings of the aggregated representations without privacy
+protection can be separated to a large extent, while those with
+privacy protection by Inf2Guard are mixed. This again veri-
+fies it is difficult for the (best) PIA to infer the private female
+ratio from the representations learnt by Inf2Guard .
+Impact of the aggregator used by the encoder: In this ex-
+periment, we test the impact of the aggregator and choose a
+max-aggregator for evaluation, where we select the element-
+wise maximum value of the representations of each subset of
+data. Table 4 shows the results. We have similar conclusions
+as those with the mean-aggregator. In addition, Inf2Guard
+with the max-aggregator has slightly worse utility-privacy
+tradeoff, compared with the mean-aggregator. A possible rea-
+son could be the mean-aggregator uses more information of
+the subset representations than the max-aggregator.
+Comparing with the DP-based defense: There exists no
+effective defense against PIAs, and [63] shows DP-SGD [3]
+does not work well. Here, we propose to use a DP variant
+called DP-encoder, similar to that against MIAs. More details
+about DP-encoder are in Appendix A. The compared results
+are shown in Table 5. We can see that, with the same level
+privacy protection as Inf2Guard , DP has much worse utility.
+5.3 Defense Results on DRAs
+5.3.1 Experimental setup
+Datasets: We select two image datasets: CIFAR10 [37] and
+CIFAR100 [37], and one human activity recognition dataset
+Activity [51] to evaluate Inf2Guard against DRAs.
+Defense/attack training and testing: Table 11 in Appendix
+shows the statistics of the utility/attack training and test sets.
+•Defense training: We use the training set to train the en-
+coder, utility preservation network, reconstruction protec-
+tion network, and update the perturbation distribution pa-
+rameters, simultaneously. Then, the learnt encoder and per-
+turbation distribution are published.Table 6: Inf2Guard results against DRAs. A smaller SSIM
+or PSNR indicates better defense performance ( λ=0.4).
+CIFAR10
+Scale εUtility SSIM/PSNR
+0 89.5% 0.78 / 15.97
+0.75 85.2% 0.42 / 12.09
+1.25 78.0% 0.21 / 11.87
+1.75 68.9% 0.17 / 11.21CIFAR100
+εUtility SSIM/PSNR
+0 52.7% 0.92 / 22.79
+0.75 49.1% 0.36 / 13.36
+1.00 46.5% 0.19 / 12.70
+1.25 43.3% 0.14 / 12.29Activity
+εUtility MSE
+0 95.1% 0.81
+0.5 90.1% 1.06
+1.085.6% 1.32
+1.5 81.0% 1.64
+Table 7: Impact of λonInf2Guard against DRAs ( ε=1.25).
+CIFAR10
+λUtility SSIM/PSNR
+0.1 83.2% 0.52 / 12.79
+0.4 78.0% 0.21 / 11.87
+0.7 67.9% 0.15 / 11.43CIFAR100
+λUtility SSIM/PSNR
+0.1 46.8% 0.46 / 14.75
+0.4 46.5% 0.21 / 12.70
+0.7 46.5% 0.20 / 12.42Activity
+λUtility MSE
+0.1 90.0% 1.25
+0.4 85.6% 1.32
+0.7 85.0% 1.62
+•Attack training: We mimic the strongest DRA, where the
+attacker knows the reconstruction protection network, train-
+ing set, and perturbation distribution. S/he feeds each train-
+ing data to the learnt encoder + perturbation distribution to
+get the perturbed representation. Then the attacker trains
+the reconstruction network (using the pair of input data and
+its perturbed representation) to infer the training data.
+•Defense/attack testing: We use the utility test set to obtain
+the utility via querying the encoder and utility network; and
+use the attack test set to obtain the DRA performance by
+querying the trained encoder and reconstruction network.
+Privacy metric: For image datasets, we use the common
+Structural Similarity Index Measure (SSIM) and PSNR met-
+rics [27]. A larger SSIM (or PSNR) between two images
+indicate they look more similar. An effective attack aims to
+achieve a large SSIM (or PSNR), while the defender does the
+opposite. For human activity dataset, we use the mean-square
+error (MSE) between two samples to measure similarity. A
+smaller/larger MSE indicates a more effective attack/defense.
+5.3.2 Experimental results
+Utility-privacy results: Table 6 shows the defense results of
+Inf2Guard with the Gaussian perturbation distribution, where
+λ=0.4in Equation (20). We can observe εacts a utility-
+privacy tradeoff. A larger εimplies adding more perturbation
+to the representation during defense training. This makes the
+DRA more challenging, but also sacrifice the utility more.
+We also test the impact of λand the results are shown in
+Table 7. We can see λalso acts as a tradeoff—a larger λcan
+protect data privacy more, while having larger utility loss.
+Comparing with the DP-based defense: All empirical de-
+fenses against DRAs are broken are by an advanced attack [9].
+A few papers [7, 53] show if a randomized algorithm satisfies
+DP, it can defend against DRAs with provable guarantees.
+We compare Inf2Guard with DP and Table 8 shows the DP
+results. Viewing with results in Table 6, we see Inf2Guard
+obtains better utility-privacy tradeoffs than DP-SGD.
+USENIX Association 33rd USENIX Security Symposium    2415
+Table 8: DP-SGD defense results against DRAs. A smaller
+SSIM or PSNR indicates better defense performance.
+CIFAR10
+Scale εUtility SSIM/PSNR
+0 89.5% 0.78 / 15.97
+0.75 85.6% 0.50 / 13.21
+1.25 77.4% 0.37 / 12.45
+1.75 65.3% 0.36 / 12.35CIFAR100
+εUtility SSIM/PSNR
+0 52.7% 0.92 / 22.79
+0.75 49.5% 0.43 / 13.77
+1.00 46.7% 0.24 / 12.87
+1.25 43.3% 0.18 / 12.54Activity
+εUtility MSE
+0 95.1% 0.81
+0.5 91.8% 0.88
+1.0 90.1% 0.90
+1.584.1% 1.01
+(a) Raw images
+ (b) No defense
+ (c) DP
+ (d)Inf2Guard
+Figure 9: Raw images vs. reconstructions on CIFAR10. DP
+Utility: 77%, Inf2Guard Utility: 78%.
+Visualizing data reconstruction results: Figure 9 and Fig-
+ure 10 show the reconstruction results on some CIFAR10
+and CIFAR100 images, respectively. We see that, without de-
+fense, the attacker can accurately reconstruct the raw images.
+With a similar utility, visually, Inf2Guard can better defend
+against image reconstruction than DP. Figure 11 summarizes
+the reconstruction results on 50 samples in Activity, where we
+report the difference between each reconstructed feature by
+Inf2Guard and that by DP to the true feature. A (larger) pos-
+itive value implies Inf2Guard is (more) dissimilar than DP
+to the true feature. We can see Inf2Guard has better defense
+results than DP in most (413 out of 516) of the features.
+6 Discussion and Future Work
+Inf2Guard and DP: Essentially, Inf2Guard and DP are
+two different provable privacy mechanisms, and they com-
+plement each other. First, DP mainly measures the user or
+sample-level privacy risks in the worst case while Inf2Guard
+can accurately measure the average privacy risks at the dataset
+level with the derived bounds. Second, DP has been shown
+to provide some resilience transferability across some infer-
+ence attacks [53] (but not all of them). It is also interest-
+ing to study the resilience transferability for the proposed
+Inf2Guard , which we will explore in the future. More im-
+portantly, our Inf2Guard can complement DP. For instance,
+we can use the learnt (deterministic) data representations by
+Inf2Guard as input to DP-SGD or add (Gaussian) noise to
+the representations to ensure DP guarantees against MIAs.
+Task-agnostic representation learning: Our current MI for-
+mulation for utility preservation knows the labels of the learn-
+(a) Raw images
+ (b) No defense
+ (c) DP
+ (d)Inf2Guard
+Figure 10: Raw images vs. reconstructions on CIFAR100. DP
+Utility: 47%, Inf2Guard Utility: 47%. Better zoom in.
+Figure 11: Inf2Guard vs. DP on 50 samples in Activity (both
+utility=86%). We count #features located in each bin. The
+value range in each bin means the difference between the
+reconstructed feature by Inf2Guard and that by DP to the
+true feature. A positive value implies Inf2Guard produces
+more dissimilar reconstruction than DP.
+ing task (e.g., see Equation (2)). A more promising solution
+would be task-agnostic, i.e., learning task-agnostic represen-
+tations that can benefit many (unknown) downstream tasks.
+We note that our framework can be easily extended to this
+scenario. For instance, in MIAs, we now require the learnt rep-
+resentation rincludes as much information about the training
+sample xas possible (i.e., u=1). Intuitively, when rretains
+all information about x, the model trained on rwill have the
+same performance as trained on the raw x, despite the learning
+task. Formally, the MI objective becomes max fI(x;r|u=1).
+Defending against multiple inference attacks simultane-
+ously: We design the customized MI objectives to defend
+against each inference attack in the paper. A natural solution
+to defend against multiple inference attacks is unifying their
+training objectives (by summarizing them with tradeoff hy-
+perparameters). While this is possible, we emphasize that the
+learnt encoder is weak against all attacks. This is because
+the encoder should balance the defense effectiveness among
+these attacks, and cannot be optimal against all of them.
+Generalizing our theoretical results: Our theoretical results
+assume the learning task is binary classification and dataset
+property is binary-valued. We will generalize our theoretical
+results to multiclass classification and other types of learning
+such as regression and multi-valued dataset property.
+2416    33rd USENIX Security Symposium USENIX Association
+Generalizing our framework against security attacks: In
+our current framework, each privacy protection task is formal-
+ized via an MI objective. An important future work would be
+generalizing our framework to design customized MI objec-
+tives to learn robust representations against security attacks
+such as evasion, poisoning, and backdoor attacks.
+7 Related Work
+7.1 MIAs and Defenses
+MIAs [12,14,16,31,39,54,58 –60,70,73,76]. Existing MIAs
+can be classified as training based [12,14,16,39,52,54,58,60,
+72,73] and non-training based [16,59]. Given a (non)training
+sample and its output by a target ML model, training based
+MIAs use the (sample, output) pair to train a binary classifier,
+which is then used to determine whether a testing sample
+belongs to the training set or not. For instance, [58] intro-
+duces multiple shadow models to perform training. In contrast,
+non-training based MIAs directly use the samples’ predicted
+score/label to make decisions. For instance, [59] designs a
+metric prediction correctness , which infers the membership
+based on whether a given sample is correctly classified by the
+target model or not. Overall, an MIA that has more informa-
+tion is often more effective than that has less information.
+Defenses [35, 45, 54, 56, 58, 59, 61, 71]. They can be catego-
+rized as training time based defense (e.g., dropout [54], L2
+norm regularization [58], model stacking [54], adversary reg-
+ularization [45], loss variance deduction [71], DP [3, 32, 75],
+early stopping [59], knowledge distillation [56]) and inference
+time based defense (e.g., MemGuard [35]). Almost all of them
+are empirical and broken by stronger attacks [16, 59]. DP is
+only defense offering privacy guarantees. Its main idea is to
+add noise to the gradient [3, 75] or objective function [32]
+during training. The main drawback of current DP methods
+is that they have significant utility losses [33, 56].
+7.2 PIAs and Defenses
+PIAs [5,6,13,20,24,41,42,63,66,77,79]. Ateniese et al. [6] are
+the first to describe the problem of the PIA (against support
+vector machines and hidden Markov models), where the attack
+is performed in the the white-box setting and consists of train-
+ing a meta-classifier on top of many shadow models. Ganju
+et al. [20] extend PIAs to neural networks, particularly fully
+connected neural networks (FCNNs). Zhang et al. [77] pro-
+pose PIAs in the black-box setting and train a meta-classifier
+based on shadow models. Mahloujifar et al. [41] observe that
+data poisoning attacks can be incorporated into training the
+shadow model and increase the effectiveness of PIAs. Suri and
+Evans [63] are the first to formally formalize PIAs as a cryp-
+tographic game, inspired by the way to formalize MIAs [73].
+They also extend the white-box attack on FCNNs [20] to con-
+volutional neural networks (CNNs). Zhou et al. [79] developthe first PIA against generative models, i.e., generative ad-
+versarial networks (GANs) [23], under the black-box setting.
+Chaudhari et al. [13] propose a data poisoning strategy to
+perform the efficient private property inference.
+Defenses . To our best knowledge, there exist no known ef-
+fective defenses against PIAs. DP cannot mitigate PIAs since
+it obfuscates individual samples, while PIAs care about the
+entire datasets [63]. [63] also shows that DP does not work as
+a potential defense (also verified in Section 5).
+7.3 DRAs and Defenses
+DRAs [7 –9,19,22,27,28,34,67,68,74,78,81]. Existing DRAs
+mainly reconstruct the training data from the model parame-
+ters or representations. They are formulated as an optimiza-
+tion problem that minimizes the difference between gradient
+from the raw training data and that from the reconstructed data.
+For instance, Zhu et al. [81] proposed a DLG attack method
+which relies entirely on minimization of the difference of
+gradients. Furthermore, several methods [22, 28, 34, 67, 74]
+propose to incorporate prior knowledge (e.g., total variation
+regularization [22, 74], batch normalization statistics [74])
+into the training data, or introduce an auxiliary dataset to
+simulate the training data distribution [28, 34, 67] (e.g., via
+GANs [23]). A few works [22, 80] derive close-formed so-
+lutions to reconstruct the data, by constraining the neural
+networks to be fully connected [22] or convolutional [80].
+Defenses [21, 25, 38, 48, 55, 62, 69, 81]. Most of these de-
+fenses have none/little privacy guarantees. For instance, Zhu
+et al. [81] propose to prune model parameters with smaller
+magnitudes. Sun et al. [62] propose to obfuscate the gradi-
+ent for a single layer (called defender layer) such that the
+reconstructed data and the original data are dissimilar. Gao
+et al. [21] propose to generate augmented images that, when
+they are used to train the network, produce non-invertible
+gradients. These defenses are broken by an advanced attack
+based on Bayesian learning [9]. Only defenses based on DP-
+SGD [3], a version of SGD with clipping and adding Gaussian
+noise, provide formal privacy guarantees.
+8 Conclusion
+We propose a unified information-theoretic framework,
+dubbed Inf2Guard , to learn privacy-preserving representa-
+tions against the three major types of inferences attacks
+(i.e., membership inference, property inference, and data re-
+construction attacks). The framework formalizes the util-
+ity preservation and privacy protection against each attack
+via customized mutual information objectives. The frame-
+work also enables deriving theoretical results, e.g., inher-
+ent utility-privacy tradeoff, and guaranteed privacy leakage
+against each attack. Extensive evaluations verify the effective-
+ness of Inf2Guard for learning privacy-preserving represen-
+tations and show the superiority over the compared baselines.
+USENIX Association 33rd USENIX Security Symposium    2417
+Acknowledgement
+We thank all the anonymous reviewers and our shepherd for
+the valuable feedback and constructive comments. Wang is
+partially supported by the National Science Foundation (NSF)
+under grant Nos. ECCS-2216926, CNS-2241713 and CNS-
+2339686. Hong is partially supported by the National Science
+Foundation (NSF) under grant Nos. CNS-2302689, CNS-
+2308730, CNS-2319277 and CMMI-2326341. Any opinions,
+findings and conclusions or recommendations expressed in
+this material are those of the author(s) and do not necessarily
+reflect the views of the funding agencies.
+References
+[1]Chatgpt. https://chat.openai.com/ . developed by Ope-
+nAI.
+[2]Palm 2. https://ai.google/discover/palm2/ . developed
+by Goolge.
+[3]Martin Abadi, Andy Chu, Ian Goodfellow, H Brendan McMa-
+han, Ilya Mironov, Kunal Talwar, and Li Zhang. Deep learning
+with differential privacy. In CCS, 2016.
+[4]Alexander A Alemi, Ian Fischer, Joshua V Dillon, and Kevin
+Murphy. Deep variational information bottleneck. In ICLR ,
+2017.
+[5]Caridad Arroyo Arevalo, Sayedeh Leila Noorbakhsh, Yun
+Dong, Yuan Hong, and Binghui Wang. Task-agnostic privacy-
+preserving representation learning for federated learning
+against attribute inference attacks. In AAAI , 2024.
+[6]Giuseppe Ateniese, Luigi V Mancini, Angelo Spognardi, An-
+tonio Villani, Domenico Vitali, and Giovanni Felici. Hacking
+smart machines with smarter ones: How to extract meaningful
+data from machine learning classifiers. IJSN , 2015.
+[7]Borja Balle, Giovanni Cherubin, and Jamie Hayes. Recon-
+structing training data with informed adversaries. In IEEE SP ,
+2022.
+[8]Mislav Balunovic, Dimitar Dimitrov, Nikola Jovanovi ´c, and
+Martin Vechev. Lamp: Extracting text from gradients with
+language model priors. In NeurIPS , 2022.
+[9]Mislav Balunovic, Dimitar Iliev Dimitrov, Robin Staab, and
+Martin Vechev. Bayesian framework for gradient leakage. In
+ICLR , 2022.
+[10] Mohamed Ishmael Belghazi, Aristide Baratin, Sai Rajeshwar,
+Sherjil Ozair, Yoshua Bengio, Aaron Courville, and Devon
+Hjelm. Mutual information neural estimation. In ICML , 2018.
+[11] Yoshua Bengio, Aaron Courville, and Pascal Vincent. Rep-
+resentation learning: A review and new perspectives. IEEE
+TPMAI , 2013.
+[12] Nicholas Carlini, Steve Chien, Milad Nasr, Shuang Song, An-
+dreas Terzis, and Florian Tramer. Membership inference at-
+tacks from first principles. In IEEE SP , 2022.
+[13] Harsh Chaudhari, John Abascal, Alina Oprea, Matthew Jagiel-
+ski, Florian Tramèr, and Jonathan Ullman. Snap: Efficient
+extraction of private properties with poisoning. In IEEE SP ,
+2023.[14] Dingfan Chen, Ning Yu, Yang Zhang, and Mario Fritz. Gan-
+leaks: A taxonomy of membership inference attacks against
+generative models. In CCS, 2020.
+[15] Pengyu Cheng, Weituo Hao, Shuyang Dai, Jiachang Liu, Zhe
+Gan, and Lawrence Carin. Club: A contrastive log-ratio upper
+bound of mutual information. In ICML , 2020.
+[16] Christopher A Choquette-Choo, Florian Tramer, Nicholas Car-
+lini, and Nicolas Papernot. Label-only membership inference
+attacks. In ICML , 2021.
+[17] Clarifai. https://www.clarifai.com/demo . July 2019.
+[18] Cynthia Dwork. Differential privacy. In ICALP , 2006.
+[19] Liam H Fowl, Jonas Geiping, Wojciech Czaja, Micah Gold-
+blum, and Tom Goldstein. Robbing the fed: Directly obtaining
+private data in federated learning with modified models. In
+ICLR , 2022.
+[20] Karan Ganju, Qi Wang, Wei Yang, Carl A Gunter, and Nikita
+Borisov. Property inference attacks on fully connected neural
+networks using permutation invariant representations. In CCS,
+2018.
+[21] Wei Gao, Shangwei Guo, Tianwei Zhang, Han Qiu, Yonggang
+Wen, and Yang Liu. Privacy-preserving collaborative learning
+with automatic transformation search. In CVPR , 2021.
+[22] Jonas Geiping, Hartmut Bauermeister, Hannah Dröge, and
+Michael Moeller. Inverting gradients–how easy is it to break
+privacy in federated learning? In NeurIPS , 2020.
+[23] Ian Goodfellow, Jean Pouget-Abadie, Mehdi Mirza, Bing
+Xu, David Warde-Farley, Sherjil Ozair, Aaron Courville, and
+Yoshua Bengio. Generative adversarial nets. In NIPS , 2014.
+[24] Divya Gopinath, Hayes Converse, Corina Pasareanu, and
+Ankur Taly. Property inference for deep neural networks. In
+ASE, 2019.
+[25] Jihun Hamm, Yingjun Cao, and Mikhail Belkin. Learning
+privately from multiparty data. In ICML , 2016.
+[26] Valentin Hartmann, Léo Meynent, Maxime Peyrard, Dimitrios
+Dimitriadis, Shruti Tople, and Robert West. Distribution infer-
+ence risks: Identifying and mitigating sources of leakage. In
+IEEE SaTML , 2023.
+[27] Zecheng He, Tianwei Zhang, and Ruby B Lee. Model inversion
+attacks against collaborative inference. In ACSAC , 2019.
+[28] Briland Hitaj, Giuseppe Ateniese, and Fernando Perez-Cruz.
+Deep models under the gan: information leakage from collabo-
+rative deep learning. In CCS, 2017.
+[29] R Devon Hjelm, Alex Fedorov, Samuel Lavoie-Marchildon,
+Karan Grewal, Phil Bachman, Adam Trischler, and Yoshua
+Bengio. Learning deep representations by mutual information
+estimation and maximization. In ICLR , 2019.
+[30] Nils Homer, Szabolcs Szelinger, Margot Redman, David Dug-
+gan, Waibhav Tembe, Jill Muehling, John V Pearson, Diet-
+rich A Stephan, Stanley F Nelson, and David W Craig. Re-
+solving individuals contributing trace amounts of dna to highly
+complex mixtures using high-density snp genotyping microar-
+rays. PLoS genetics .
+2418    33rd USENIX Security Symposium USENIX Association
+[31] Bo Hui, Yuchen Yang, Haolin Yuan, Philippe Burlina,
+Neil Zhenqiang Gong, and Yinzhi Cao. Practical blind mem-
+bership inference attack via differential comparisons. In NDSS ,
+2021.
+[32] Roger Iyengar, Joseph P Near, Dawn Song, Om Thakkar,
+Abhradeep Thakurta, and Lun Wang. Towards practical differ-
+entially private convex optimization. In IEEE SP , 2019.
+[33] Bargav Jayaraman and David Evans. Evaluating differentially
+private machine learning in practice. In USENIX Security ,
+2019.
+[34] Jinwoo Jeon, Jaechang Kim, Kangwook Lee, Sewoong Oh, and
+Jungseul Ok. Gradient inversion with generative image prior.
+InNeurIPS , 2021.
+[35] Jinyuan Jia, Ahmed Salem, Michael Backes, Yang Zhang, and
+Neil Zhenqiang Gong. Memguard: Defending against black-
+box membership inference attacks via adversarial examples.
+InCCS, 2019.
+[36] Diederik P Kingma and Max Welling. Auto-encoding varia-
+tional bayes. In ICLR , 2014.
+[37] Alex Krizhevsky. Learning multiple layers of features from
+tiny images. Technical report, 2009.
+[38] Hongkyu Lee, Jeehyeong Kim, Seyoung Ahn, Rasheed Hus-
+sain, Sunghyun Cho, and Junggab Son. Digestive neural net-
+works: A novel defense strategy against inference attacks in
+federated learning. computers & security , 2021.
+[39] Klas Leino and Matt Fredrikson. Stolen memories: Leverag-
+ing model memorization for calibrated white-box membership
+inference. In Usenix Security) , 2020.
+[40] Ziwei Liu, Ping Luo, Xiaogang Wang, and Xiaoou Tang. Deep
+learning face attributes in the wild. In ICCV , 2015.
+[41] Saeed Mahloujifar, Esha Ghosh, and Melissa Chase. Property
+inference from poisoning. In IEEE SP , 2022.
+[42] Pratyush Maini, Mohammad Yaghini, and Nicolas Papernot.
+Dataset inference: Ownership resolution in machine learning.
+InICLR , 2021.
+[43] Ilya Mironov. Rényi differential privacy. In 30th IEEE Com-
+puter Security Foundations Symposium, CSF 2017, Santa Bar-
+bara, CA, USA, August 21-25, 2017 , pages 263–275. IEEE
+Computer Society, 2017.
+[44] Meisam Mohammady, Shangyu Xie, Yuan Hong, Mengyuan
+Zhang, Lingyu Wang, Makan Pourzandi, and Mourad Debbabi.
+R2DP: A universal and automated approach to optimizing the
+randomization mechanisms of differential privacy for utility
+metrics with no known optimal distributions. In CCS, 2020.
+[45] Milad Nasr, Reza Shokri, and Amir Houmansadr. Machine
+learning with membership privacy using adversarial regulariza-
+tion. In CCS, 2018.
+[46] Sebastian Nowozin, Botond Cseke, and Ryota Tomioka. f-
+gan: Training generative neural samplers using variational
+divergence minimization. In NIPS , 2016.
+[47] Aaron van den Oord, Yazhe Li, and Oriol Vinyals. Repre-
+sentation learning with contrastive predictive coding. arXiv ,
+2018.[48] Manas Pathak, Shantanu Rane, and Bhiksha Raj. Multiparty
+differential privacy via aggregation of locally trained classifiers.
+InNeurIPS , 2010.
+[49] Xue Bin Peng, Angjoo Kanazawa, Sam Toyer, Pieter Abbeel,
+and Sergey Levine. Variational discriminator bottleneck: Im-
+proving imitation learning, inverse rl, and gans by constraining
+information flow. arXiv preprint arXiv:1810.00821 , 2018.
+[50] Ben Poole, Sherjil Ozair, Aaron van den Oord, Alexander A
+Alemi, and George Tucker. On variational bounds of mutual
+information. In ICML , 2019.
+[51] Jorge Reyes-Ortiz, Davide Anguita, Alessandro Ghio, Luca
+Oneto, and Xavier Parra. Human Activity Recognition Using
+Smartphones. UCI Machine Learning Repository, 2012. DOI:
+https://doi.org/10.24432/C54S4K.
+[52] Alexandre Sablayrolles, Matthijs Douze, Cordelia Schmid,
+Yann Ollivier, and Hervé Jégou. White-box vs black-box:
+Bayes optimal strategies for membership inference. In ICML ,
+2019.
+[53] Ahmed Salem, Giovanni Cherubin, David Evans, Boris Köpf,
+Andrew Paverd, Anshuman Suri, Shruti Tople, and Santiago
+Zanella-Béguelin. Sok: Let the privacy games begin! a unified
+treatment of data inference privacy in machine learning. In
+IEEE SP , 2023.
+[54] Ahmed Salem, Yang Zhang, Mathias Humbert, Pascal Berrang,
+Mario Fritz, and Michael Backes. Ml-leaks: Model and data
+independent membership inference attacks and defenses on
+machine learning models. In NDSS , 2018.
+[55] Daniel Scheliga, Patrick Mäder, and Marco Seeland. Precode-a
+generic model extension to prevent deep gradient leakage. In
+WACV , 2022.
+[56] Virat Shejwalkar and Amir Houmansadr. Membership privacy
+for machine learning models through knowledge transfer. In
+AAAI , 2021.
+[57] Reza Shokri and Vitaly Shmatikov. Privacy-preserving deep
+learning. In CCS, pages 1310–1321, 2015.
+[58] Reza Shokri, Marco Stronati, Congzheng Song, and Vitaly
+Shmatikov. Membership inference attacks against machine
+learning models. In IEEE SP , 2017.
+[59] Liwei Song and Prateek Mittal. Systematic evaluation of pri-
+vacy risks of machine learning models. In USENIX Security ,
+2021.
+[60] Liwei Song, Reza Shokri, and Prateek Mittal. Privacy risks of
+securing machine learning models against adversarial exam-
+ples. In CCS, 2019.
+[61] Nitish Srivastava, Geoffrey E Hinton, Alex Krizhevsky, Ilya
+Sutskever, and Ruslan Salakhutdinov. Dropout: a simple way
+to prevent neural networks from overfitting. JMLR , 2014.
+[62] Jingwei Sun, Ang Li, Binghui Wang, Huanrui Yang, Hai Li,
+and Yiran Chen. Provable defense against privacy leakage in
+federated learning from representation perspective. In CVPR ,
+2021.
+[63] Anshuman Suri and David Evans. Formalizing and estimating
+distribution inference risks. In PETS , 2022.
+USENIX Association 33rd USENIX Security Symposium    2419
+[64] Laurens Van der Maaten and Geoffrey Hinton. Visualizing
+data using t-sne. JMLR , 2008.
+[65] Han Wang, Jayashree Sharma, Shuya Feng, Kai Shu, and Yuan
+Hong. A model-agnostic approach to differentially private
+topic mining. In KDD , pages 1835–1845, 2022.
+[66] Xiuling Wang and Wendy Hui Wang. Group property inference
+attacks against graph neural networks. In CCS, 2022.
+[67] Zhibo Wang, Mengkai Song, Zhifei Zhang, Yang Song, Qian
+Wang, and Hairong Qi. Beyond inferring class representa-
+tives: User-level privacy leakage from federated learning. In
+INFOCOM , 2019.
+[68] Zihan Wang, Jason Lee, and Qi Lei. Reconstructing training
+data from model gradient, provably. In AISTATS , 2023.
+[69] Kang Wei, Jun Li, Ming Ding, Chuan Ma, Howard H Yang,
+Farhad Farokhi, Shi Jin, Tony QS Quek, and H Vincent Poor.
+Federated learning with differential privacy: Algorithms and
+performance analysis. IEEE TIFS , 2020.
+[70] Yuxin Wen, Arpit Bansal, Hamid Kazemi, Eitan Borgnia,
+Micah Goldblum, Jonas Geiping, and Tom Goldstein. Canary
+in a coalmine: Better membership inference with ensembled
+adversarial queries. In ICLR , 2023.
+[71] Nuo Xu, Binghui Wang, Ran Ran, Wujie Wen, and Parv Venki-
+tasubramaniam. Neuguard: Lightweight neuron-guided de-
+fense against membership inference attacks. In ACSAC , 2022.
+[72] Jiayuan Ye, Aadyaa Maddi, Sasi Kumar Murakonda, Vincent
+Bindschaedler, and Reza Shokri. Enhanced membership in-
+ference attacks against machine learning models. In CCS,
+2022.
+[73] Samuel Yeom, Irene Giacomelli, Matt Fredrikson, and Somesh
+Jha. Privacy risk in machine learning: Analyzing the connec-
+tion to overfitting. In IEEE CSF , 2018.
+[74] Hongxu Yin, Arun Mallya, Arash Vahdat, Jose M Alvarez, Jan
+Kautz, and Pavlo Molchanov. See through gradients: Image
+batch recovery via gradinversion. In CVPR , 2021.
+[75] Lei Yu, Ling Liu, Calton Pu, Mehmet Emre Gursoy, and Stacey
+Truex. Differentially private model publishing for deep learn-
+ing. In IEEE SP , 2019.
+[76] Xiaoyong Yuan and Lan Zhang. Membership inference attacks
+and defenses in neural network pruning. In Usenix Security ,
+2022.
+[77] Wanrong Zhang, Shruti Tople, and Olga Ohrimenko. Leak-
+age of dataset properties in multi-party machine learning. In
+USENIX Security , 2021.
+[78] Bo Zhao, Konda Reddy Mopuri, and Hakan Bilen. idlg: Im-
+proved deep leakage from gradients. arXiv , 2020.
+[79] Junhao Zhou, Yufei Chen, Chao Shen, and Yang Zhang. Prop-
+erty inference attacks against gans. NDSS 2022 , 2022.
+[80] Junyi Zhu and Matthew Blaschko. R-gap: Recursive gradient
+attack on privacy. ICLR , 2021.
+[81] Ligeng Zhu, Zhijian Liu, and Song Han. Deep leakage from
+gradients. In NeurIPS , 2019.Algorithm 1 Inf2Guard against MIAs
+Input: Dataset D1of members and dataset D0of non-members, tradeoff
+hyperparameter λ∈[0,1], learning rates lr1,lr2,lr3; #local gradients I,
+#global rounds T.
+Output: Network parameters: Θ,Ψ,Ω.
+1:Initialize Θ,Ψ,Ωfor the encoder f, membership protection network gΨ,
+and utility preservation network hφ;
+2:fort=1 toTdo
+3: L1=∑(xj,uj)∈D1∪D0H(uj,gΨ(f(xj)));
+4: L2=∑(xj,yj)∈D1H(yj,hΩ(f(xj)));
+5: fori=1 toIdo
+6: Ψ←Ψ−lr1·∂L1
+∂Ψ;
+7: Ω←Ω−lr2·∂L2
+∂Ω;
+8: Θ←Θ+lr3·∂(λL1−(1−λ)L2)
+∂Θ;
+Algorithm 2 Inf2Guard against PIAs
+Input: Ndatasets {Dj}N
+j=1sampled from a reference dataset Drwith each
+Djhaving a property value uj, tradeoff hyperparameter λ∈[0,1], learning
+rates lr1,lr2,lr3; #local gradients I, #global rounds T.
+Output: Network parameters: Θ,Ω,Ψ.
+1:Initialize Θ,Ψ,Ωfor the encoder f, property protection network gΨ, and
+utility preservation network hφ;
+2:forround t=1 toTdo
+3: L1=∑{(Xj,yj)=Dj}jH(uj,gΨ(f(Xj)));
+4: L2=∑(xi,yi)∈S
+jDjH(yi,hΩ(f(xi)));
+5: fori=1 toIdo
+6: Ψ←Ψ−lr1·∂L1
+∂Ψ;
+7: Ω←Ω−lr2·∂L2
+∂Ω;
+8: Θ←Θ+lr3·∂(λL1−(1−λ)L2
+∂Θ.
+Algorithm 3 Update perturbation distribution parameter Φ
+Input: KMonte Carlo samples, the encoder fΘin the previous round,
+objective function Eqn (20). learning rate lr, #epochs Il
+Output: Perturbation distribution parameters Φ
+1: Initialize Φ= (µµµ,σσσ).
+2:fori=1 toIldo
+3: forj=1 toKdo
+4: Sample zjfromN(0,1)and compute δδδj=µµµ+σσσzzzj;
+5: Calculate the gradient gΦof Eqn (25) w.r.t. Φ;
+6: Update Φby:Φ←Φ−lr·gΦ.
+Algorithm 4 Inf2Guard against DRAs
+Input: A dataset D={xn,yn}, hyperparameters λ∈[0,1], learning rates
+lr1,lr2,lr3, #local gradients I, #global rounds T.
+Output: Network parameters: Ω,Ψ,Θ.
+1:Initialize Θ,Ψ,Ω,Φfor the encoder f, data reconstruction network gΨ,
+utility preservation network hΩ, and perturbation distribution parameter.
+2:forround t=1 toTdo
+3: foreach batch bs⊂Ddo
+4: Update Φvia Algorithm 3;
+5: Update gΨ(given Θand{δδδi}): Calculate I(JSD)
+Θ,Ψonbswith{δδδi}
+via Eqn (22); Ψ←Ψ+lr1·∂I(JSD)
+Θ,Ψ/∂Ψ;
+6: Update hΩ(given Θand{δδδi}): Calculate CE loss L1onbswith
+{δδδi}via Eqn (23); Calculate CE loss L2onbswith clean data via
+Eqn (24); Ω←Ω−lr2·∂(L1+L2)/∂Ω;
+7: Update fΘ(given Ψ,Ω, and{δδδi}):Θ←Θ−lr3·∂
+∂Θ(λI(JSD)
+Θ,Ψ+
+(1−λ)(L1+L2));
+2420    33rd USENIX Security Symposium USENIX Association
+Table 9: Training and test sets for primary and MIA tasks.
+CIFAR10 Purchase100 Texas100
+Utility training set 25,000 98,662 33,665
+Utility test set 25,000 98,662 33,665
+Attack training set 40,000 157,859 53,864
+Attack test set 10,000 39,465 13,466
+Table 10: Training and test sets for primary and PIA tasks.
+Census RSNA CelebA
+Subset size [2,32k] [2,100] [2,20]
+female ratios {0.2,0.3,···,0.5}{0.2,0.3,···,0.8}{0.0,0.1,···,1.0}
+Attack train set 8k subsets 14k subsets 22k subsets
+Attack test set 2k subsets 3.5k subsets 5.5k subsets
+Utility train set data in 8k subsets in 14k subsets in 22k subsets
+Utility test set data in 2k subsets in 3.5k subsets in 5.5k subsets
+Table 11: Training and test sets for primary and DRA tasks.
+CIFAR10 CIFAR100 Activity
+Utility/Attack training set 50,000 50,000 7,352
+Utility test set 10,000 10,000 2,947
+Attack test set 50 50 50
+A More Experimental Setup
+Training and testing: Table 9-Table 11 show the utility train-
+ing/test and attack training/test sets on the three datasets.
+Differential Privacy (DP) against MIAs: DP provides an
+upper bound on the success of any MIA. We can add noise in
+several ways (e.g., to input data, model parameters, gradients,
+latent features, output scores) to ensure DP. Note that there
+exists an inherent trade-off between utility and privacy: a
+larger added noise often leads to a higher level of privacy
+protection, but incurs a larger utility loss. Here, we propose
+to use the below two ways.
+•DP-SGD [3]: 1) DP-SGD training: It clips gradients (with
+a gradient norm bound) and adds Gaussian noise to the
+gradient in each SGD round when training the ML model
+(i.e., encoder + utility network). More details can be seen
+in Algorithm 1 in [3]. After training, the model ensures DP
+guarantees and the encoder is published. 2) Attack training:
+The attacker obtains the representations of the attack train-
+ing data via querying the trained encoder and uses these
+representations to train the MIA classifier. 3) Defense/attack
+testing: The utility test set is used to obtain the utility via
+querying the trained ML model; and the attack test set to
+obtain the MIA accuracy via querying the trained encoder
+and trained MIA classifier.
+We used the Opacus library ( https://opacus.ai/ ), a Py-
+Torch extension that enables training models with DP-SGD
+and dynamically tracks privacy budget and utility. In the
+experiments, we tried εin DP-SGD from 0.5 to 16.
+•DP-encoder: 1) Normal training: It first trains the encoder
++ utility network using the (utility) training set. The encoder
+is then frozen and can be used to produce data representa-
+tions when queried by data samples. 2) Defense via addingTable 12: More DP results against MIAs.
+DP-SGDCIFAR10 Purchase100 Texas100
+Utility MIA Acc Utility MIA Acc Utility MIA Acc
+ε=0.5 46% 50% 40% 52% 11% 51%
+ε=1 48% 51% 48% 54% 15% 52%
+ε=2 59% 55% 53% 57% 26% 54%
+ε=4 61% 57% 60% 59% 33% 55%
+ε=8 65% 59% 71% 62% 39% 57%
+ε=16 68% 62% 78% 66% 45% 59%
+DP-encoderCIFAR10 Purchase100 Texas100
+Utility MIA Acc Utility MIA Acc Utility MIA Acc
+σ2=10 48% 51% 32% 51% 10% 50%
+σ2=1 59% 56% 54% 56% 26% 54%
+σ2=0.1 71% 66% 65% 59% 46% 55%
+σ2=0.01 78% 79% 78% 64% 49% 60%
+Inf2Guard 77% 51% 80% 51% 46% 50%
+Table 13: Inf2Guard results against PIAs, where the attacker
+is unknown to the true (mean) aggregator and uses a substitute
+(max) one to aggregate the subset representations. Knowing
+the true aggregator is critical for designing better PIAs.
+Census
+λUtility PIA Acc
+0 85% 48%
+0.25 83% 45%
+0.5 82% 44%
+0.75 81% 28%
+1 60% 25%RSNA
+Utility PIA Acc
+0 83% 42%
+0.25 82% 24%
+0.5 82% 21%
+0.75 81% 15%
+1 60% 14%CelebA
+Utility PIA Acc
+0 91% 40%
+0.25 91% 22%
+0.5 91% 15%
+0.75 88% 9%
+1 63% 9%
+noise to the representations: We add Gaussian noise to the
+representations by querying the encoder with the attack
+training data to produce the noisy representations. Notice
+that, since the Gaussian noises are injected to the matrix-
+outputs (data representations), if needed, the actual DP
+guarantee (i.e., privacy bounds) can be derived via Rényi
+Differential Privacy [43], similar to the theoretical stud-
+ies in [44, 65]. We skip the details here since this work
+does not focus on the derivation for the privacy bounds
+of DP-encoder. 3) Attack training: The attacker uses the
+noisy representations of attack training data to train the
+MIA classifier. 4) Defense/attack testing: We use the utility
+test set to obtain the utility via querying the trained encoder
+and utility network; and use the attack test set to obtain
+the MIA accuracy on the trained encoder and trained MIA
+classifier. We call this DP-encoder as we add noise to the
+representations outputted by the well-trained encoder.
+DP-encoder against PIAs: We follow the strategy in DP
+against MIAs and choose the DP-encoder, as DP-SGD is inef-
+fective in this setting [63]. The only difference is that we now
+add Gaussian noise to the mean- aggregated representation of
+a subset, instead of the individual representation.
+Data reconstruction attack/defense on shallow encoder:
+As shown in [27], when the encoder is deep, it is difficult for
+the attacker to reconstruct the input data from the representa-
+tion. To ensure DRAs be effective, we use a shallow 2-layer
+encoder. As a result, this makes the defense more challenging.
+USENIX Association 33rd USENIX Security Symposium    2421
+(a) Utility w/o. defense (85%)
+ (b) PIA Acc w/o. defense (68%)
+ (c) Utility w. defense (76%)
+ (d) PIA Acc w. defense (34%)
+Figure 12: Inf2Guard against PIAs: 3D t-SNE embeddings results on the learnt representation on Census Income. Each point in
+(b) and (d) is an aggregated representation of a dataset.
+(a) Utility w/o. defense (83%)
+ (b) PIA Acc w/o. defense (52%)
+ (c) Utility w. defense (80%)
+ (d) PIA Acc w. defense (19%)
+Figure 13: Inf2Guard against PIAs: 3D t-SNE embeddings results on the learnt representation on RSNA Bone Age.
+(a) Utility w/o. defense (91%)
+ (b) PIA Acc w/o. defense (50%)
+ (c) Utility w. defense (89%)
+ (d) PIA Acc w. defense (11%)
+Figure 14: Inf2Guard against PIAs: 3D t-SNE embeddings results on the learnt representation on CelebA.
+B More Experimental Results
+More results on defending against MIAs: Table 12 shows
+more DP results (vs varying ε’s) against MIAs. We can see
+Inf2Guard obtains higher utility than DP methods under the
+same privacy protection performance.
+More results on defending against PIAs: Figure 12-
+Figure 14 shows the t-SNE embeddings of Inf2Guard against
+PIAs. Table 13 shows Inf2Guard results against PIAs, where
+the attacker does not the true (mean) aggregator and use a
+substitute one (i.e., max-aggregator ). We can see the attack
+performance is less effective and Inf2Guard can yield (close
+to) random guessing attack performance (when γ=0.75),
+with a slight utility loss. This implies the aggregator plays a
+critical role in designing effective PIAs against Inf2Guard .Table 14: Inf2Guard results against DRAs with uniform per-
+turbation distribution. A smaller SSIM or PSNR indicates
+better defense performance ( λ=0.4).
+CIFAR10
+Scale εUtility SSIM/PSNR
+0 89.5% 0.78 / 15.97
+1.25 85.7% 0.28 / 13.23
+2.25 77.7% 0.24 / 12.34
+3.25 64.9% 0.20 / 12.93
+More results on defending against DRAs: Table 14 shows
+theInf2Guard results against DRAs, where the perturbation
+distribution is uniform distribution. We observe similar utility-
+privacy tradeoff in terms of the noise scale ε.
+2422    33rd USENIX Security Symposium USENIX Association

@@ -1,0 +1,16 @@
+azure-storage-blob==12.25.1
+email-validator==2.2.0
+flask==3.0.0
+flask-login==0.6.3
+flask-sqlalchemy==3.1.1
+flask-wtf==1.2.1
+gunicorn==23.0.0
+psycopg2-binary==2.9.9
+pypdf2==3.0.1
+sqlalchemy==2.0.28
+werkzeug==3.0.1
+wtforms==3.1.2
+langchain_groq
+langchain
+python-dotenv==1.0.1
+PyMuPDF==1.24.10
